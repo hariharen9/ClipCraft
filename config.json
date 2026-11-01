@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "encoder": "auto",
+    "quality": 19,
+    "nvenc_preset": "p5",
+    "x264_preset": "medium"
+  },
+  "background": {
+    "blur": 22,
+    "brightness": -0.08,
+    "saturation": 0.82
+  },
+  "branding": {
+    "youtube_handle": "@thisisbadpanda",
+    "instagram_handle": "@badpandaplays",
+    "channel_name": "BADPANDA"
+  },
+  "layers": {
+    "background": {
+      "kind": "background",
+      "rect": [0.0, 0.0, 1.0, 1.0],
+      "z": 0,
+      "visible": true
+    },
+    "main": {
+      "kind": "video",
+      "rect": [0.0, 0.255, 1.0, 0.495],
+      "crop": [0.0, 0.0, 1.0, 1.0],
+      "fit": "cover",
+      "z": 10,
+      "visible": true
+    },
+    "killfeed": {
+      "kind": "video",
+      "rect": [0.445, 0.162, 0.555, 0.085],
+      "crop": [0.59, 0.018, 0.405, 0.20],
+      "fit": "cover",
+      "z": 20,
+      "visible": true
+    },
+    "chat": {
+      "kind": "video",
+      "rect": [0.02, 0.735, 0.64, 0.085],
+      "crop": [0.0, 0.755, 0.66, 0.22],
+      "fit": "cover",
+      "z": 30,
+      "visible": true
+    },
+    "valorant_title": {
+      "kind": "image",
+      "asset": "assets/valorant_title.png",
+      "rect": [0.10, 0.038, 0.80, 0.145],
+      "opacity": 1.0,
+      "z": 40,
+      "visible": true
+    },
+    "socials": {
+      "kind": "image",
+      "asset": "assets/socials.png",
+      "rect": [0.045, 0.855, 0.59, 0.115],
+      "opacity": 1.0,
+      "z": 50,
+      "visible": true
+    },
+    "channel_logo": {
+      "kind": "image",
+      "asset": "assets/channel_logo.png",
+      "rect": [0.695, 0.785, 0.275, 0.19],
+      "opacity": 1.0,
+      "z": 60,
+      "visible": true
+    }
+  }
+}

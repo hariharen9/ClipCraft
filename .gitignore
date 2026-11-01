@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.py[cod]
+exports/
+*.mp4
+*.mkv
+/assets/
