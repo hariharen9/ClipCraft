@@ -332,6 +332,19 @@ class FastTrackWindow(QMainWindow):
         self.visible_check.stateChanged.connect(self.toggle_layer_visible)
         layer_layout.addWidget(self.visible_check)
 
+        self.asset_group = QGroupBox("Image asset")
+        asset_layout = QHBoxLayout(self.asset_group)
+        asset_layout.setContentsMargins(6, 4, 6, 4)
+        self.asset_edit = QLineEdit()
+        self.asset_edit.setReadOnly(True)
+        self.asset_edit.setPlaceholderText("No asset")
+        asset_layout.addWidget(self.asset_edit, 1)
+        self.asset_button = QPushButton("Browse…")
+        self.asset_button.setMaximumWidth(72)
+        self.asset_button.clicked.connect(self.browse_asset)
+        asset_layout.addWidget(self.asset_button)
+        layer_layout.addWidget(self.asset_group)
+
         geometry_group = QGroupBox("Output position / size (% of canvas)")
         geometry_form = QFormLayout(geometry_group)
         self.geom_fields = {}
@@ -360,6 +373,10 @@ class FastTrackWindow(QMainWindow):
         apply_button = QPushButton("Apply to preview")
         apply_button.clicked.connect(self.apply_layer_changes)
         layer_layout.addWidget(apply_button)
+        self.reset_crop_button = QPushButton("Reset to default")
+        self.reset_crop_button.setToolTip("Reset source crop to config defaults")
+        self.reset_crop_button.clicked.connect(self.reset_crop_to_default)
+        layer_layout.addWidget(self.reset_crop_button)
         layout.addWidget(layer_group)
 
         actions_group = QGroupBox("Template")
@@ -484,15 +501,45 @@ class FastTrackWindow(QMainWindow):
             self.geom_fields[key].blockSignals(True)
             self.geom_fields[key].setValue(float(value) * 100)
             self.geom_fields[key].blockSignals(False)
+        is_video = layer.get("kind") == "video"
         crop = layer.get("crop", [0, 0, 1, 1])
         for key, value in zip(("x", "y", "w", "h"), crop):
-            self.crop_fields[key].setEnabled(layer.get("kind") == "video")
+            self.crop_fields[key].setEnabled(is_video)
             self.crop_fields[key].blockSignals(True)
             self.crop_fields[key].setValue(float(value) * 100)
             self.crop_fields[key].blockSignals(False)
+        self.reset_crop_button.setEnabled(is_video)
         self.visible_check.blockSignals(True)
         self.visible_check.setChecked(bool(layer.get("visible", True)))
         self.visible_check.blockSignals(False)
+        is_image = layer.get("kind") == "image"
+        self.asset_group.setVisible(is_image)
+        self.asset_edit.setText(str(layer.get("asset", "")) if is_image else "")
+
+    def browse_asset(self):
+        name = self._active_layer_name()
+        layer = self.config["layers"].get(name, {})
+        if layer.get("kind") != "image":
+            return
+        current = layer.get("asset", "")
+        if current:
+            start_dir = str((self.config_path.parent / current).resolve().parent)
+        else:
+            start_dir = str(self.config_path.parent)
+        filename, _ = QFileDialog.getOpenFileName(
+            self, f"Choose image for layer '{name}'", start_dir,
+            "Image files (*.png *.jpg *.jpeg *.webp *.bmp);;All files (*.*)"
+        )
+        if not filename:
+            return
+        try:
+            asset_path = str(Path(filename).relative_to(self.config_path.parent))
+        except ValueError:
+            asset_path = filename  # keep absolute if outside project dir
+        layer["asset"] = asset_path
+        self.asset_edit.setText(asset_path)
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Asset for '{name}' updated — click Save to persist")
 
     def toggle_layer_visible(self, state: int):
         name = self._active_layer_name()
@@ -518,6 +565,28 @@ class FastTrackWindow(QMainWindow):
             layer["crop"] = crop
         self.refresh_canvas()
         self.statusBar().showMessage(f"Updated {name} layer")
+
+    def reset_crop_to_default(self):
+        name = self._active_layer_name()
+        layer = self.config["layers"].get(name, {})
+        if layer.get("kind") != "video":
+            self.statusBar().showMessage(f"Layer '{name}' is not a video layer")
+            return
+        try:
+            fresh_cfg, _ = load_config(self.config_path)
+            default_crop = fresh_cfg.get("layers", {}).get(name, {}).get("crop")
+        except Exception:
+            default_crop = None
+        if default_crop is None:
+            default_crop = self.original_config.get("layers", {}).get(name, {}).get("crop", [0.0, 0.0, 1.0, 1.0])
+
+        layer["crop"] = [float(v) for v in default_crop]
+        for key, value in zip(("x", "y", "w", "h"), layer["crop"]):
+            self.crop_fields[key].blockSignals(True)
+            self.crop_fields[key].setValue(value * 100.0)
+            self.crop_fields[key].blockSignals(False)
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Reset {name} crop to config defaults")
 
     def _layer_dragged(self, name: str, item: LayerItem):
         rect = [item.x() / 360.0, item.y() / 640.0,
