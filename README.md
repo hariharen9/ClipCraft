@@ -179,7 +179,7 @@ To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"
 }
 ```
 
-`background.blur`, `background.brightness` and `background.saturation` control the blurred backdrop. The `canvas` section controls dimensions, FPS, encoder, quality and presets.
+`background.blur`, `background.brightness` and `background.saturation` control the blurred backdrop. Tweak them live with the **Background look** sliders in the editor (the preview updates as you drag, and Ctrl+Z undoes), then use **Save layout to config.json** to keep the values. The `canvas` section controls dimensions, FPS, encoder, quality and presets.
 
 ## 6. Current scope / practical notes
 

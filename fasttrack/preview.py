@@ -50,7 +50,10 @@ def render_background(frame: np.ndarray, width: int, height: int, config: dict[s
     image = cv2.GaussianBlur(image, (0, 0), sigmaX=blur, sigmaY=blur)
     brightness = float(background.get("brightness", -0.08))
     saturation = float(background.get("saturation", 0.82))
-    image = cv2.convertScaleAbs(image, alpha=saturation, beta=brightness * 255)
+    # Blend toward gray like FFmpeg's eq=saturation (chroma scaling), not channel scaling.
+    gray = cv2.cvtColor(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+    image = cv2.addWeighted(gray, 1.0 - saturation, image, saturation, 0.0)
+    image = cv2.convertScaleAbs(image, alpha=1.0, beta=brightness * 255.0)
     return cv2.resize(image, (width, height), interpolation=cv2.INTER_LINEAR)
 
 

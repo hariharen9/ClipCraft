@@ -25,6 +25,7 @@ from .renderer import probe_video, run_render
 
 HANDLE_SIZE = 6.0
 MIN_LAYER_SIZE = 10.0
+BG_DEFAULTS = {"blur": 22, "brightness": -0.08, "saturation": 0.82}
 
 
 class HandleItem(QGraphicsRectItem):
@@ -324,6 +325,7 @@ class FastTrackWindow(QMainWindow):
         self.play_timer.timeout.connect(self._play_tick)
         self.pending_capture = False
         self.layer_items: dict[str, LayerItem] = {}
+        self._bg_item = None
         self.worker: RenderWorker | None = None
         self._undo_stack: list[tuple[str, dict[str, Any]]] = []
         self._redo_stack: list[tuple[str, dict[str, Any]]] = []
@@ -415,6 +417,34 @@ class FastTrackWindow(QMainWindow):
         trim_form.addRow("OUT point", self.out_spin)
         trim_layout.addLayout(trim_form)
         layout.addWidget(trim_group)
+
+        bg_group = QGroupBox("Background look")
+        bg_form = QFormLayout(bg_group)
+        bg_specs = (
+            ("blur", "Blur", 1, 60, 1.0, 0),
+            ("brightness", "Brightness", -50, 50, 0.01, 2),
+            ("saturation", "Saturation", 0, 200, 0.01, 2),
+        )
+        self.bg_sliders: dict[str, tuple[QSlider, QLabel, float, int]] = {}
+        for key, title, minimum, maximum, scale, decimals in bg_specs:
+            current = float(self.config.get("background", {}).get(key, BG_DEFAULTS[key]))
+            name_label = QLabel(title)
+            name_label.setMinimumWidth(72)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(minimum, maximum)
+            slider.setValue(int(round(current / scale)))
+            slider.sliderPressed.connect(self._bg_interaction_started)
+            slider.sliderReleased.connect(self._bg_interaction_finished)
+            slider.valueChanged.connect(self._background_changed)
+            value_label = QLabel(f"{current:.{decimals}f}")
+            value_label.setMinimumWidth(48)
+            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row = QHBoxLayout()
+            row.addWidget(slider, 1)
+            row.addWidget(value_label)
+            bg_form.addRow(name_label, row)
+            self.bg_sliders[key] = (slider, value_label, scale, decimals)
+        layout.addWidget(bg_group)
 
         render_group = QGroupBox("Render settings")
         render_layout = QVBoxLayout(render_group)
@@ -929,9 +959,43 @@ class FastTrackWindow(QMainWindow):
         self.refresh_canvas()
         self._update_undo_buttons()
 
+    # -- background look ---------------------------------------------------
+
+    def _background_changed(self):
+        background = self.config.setdefault("background", {})
+        for key, (slider, value_label, scale, decimals) in self.bg_sliders.items():
+            value = round(slider.value() * scale, 4)
+            background[key] = value
+            value_label.setText(f"{value:.{decimals}f}")
+        if self._bg_item is not None and self.current_frame is not None:
+            # Only the backdrop changes — layer items keep their state.
+            background_image = render_background(self.current_frame, 360, 640, self.config)
+            self._bg_item.setPixmap(QPixmap.fromImage(to_qimage_array(background_image)))
+
+    def _bg_interaction_started(self):
+        self._pending_undo = ("Tweak background", clone_config(self.config))
+
+    def _bg_interaction_finished(self):
+        if self._pending_undo is None:
+            return
+        label, snapshot = self._pending_undo
+        self._pending_undo = None
+        if self.config.get("background", {}) != snapshot.get("background", {}):
+            self._push_undo(label, snapshot)
+
+    def _sync_background_controls(self):
+        background = self.config.get("background", {})
+        for key, (slider, value_label, scale, decimals) in self.bg_sliders.items():
+            value = float(background.get(key, BG_DEFAULTS[key]))
+            slider.blockSignals(True)
+            slider.setValue(int(round(value / scale)))
+            slider.blockSignals(False)
+            value_label.setText(f"{value:.{decimals}f}")
+
     def refresh_canvas(self):
         if self.current_frame is None:
             return
+        self._bg_item = None
         self.scene.clear()
         self.layer_items.clear()
         canvas_w, canvas_h = 360, 640
@@ -940,6 +1004,7 @@ class FastTrackWindow(QMainWindow):
         bg_item = QGraphicsPixmapItem(bg_pixmap)
         bg_item.setZValue(0)
         self.scene.addItem(bg_item)
+        self._bg_item = bg_item
         sorted_layers = sorted(self.config["layers"].items(), key=lambda pair: pair[1].get("z", 0))
         for name, layer in sorted_layers:
             if name == "background" or not layer.get("visible", True):
@@ -970,6 +1035,7 @@ class FastTrackWindow(QMainWindow):
             self.scene.addItem(item)
             self.layer_items[name] = item
         self.select_layer(self.layer_combo.currentIndex())
+        self._sync_background_controls()
         self.preview_view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def browse_output(self):
