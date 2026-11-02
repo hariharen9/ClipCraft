@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("video", nargs="?", help="Input recording (MP4, MKV, MOV, AVI, WEBM)")
-    parser.add_argument("-g", "--game", default="valorant", help="Game template (currently: valorant)")
+    parser.add_argument("-g", "--game", default=None, help="Game template from templates/ (default: valorant)")
     parser.add_argument("--in", dest="in_time", type=parse_time, help="Clip IN point (seconds, MM:SS, or HH:MM:SS)")
     parser.add_argument("--out", dest="out_time", type=parse_time, help="Clip OUT point (seconds, MM:SS, or HH:MM:SS)")
     parser.add_argument("-o", "--output", help="Output MP4 path")
@@ -62,18 +62,10 @@ def default_output(video_path: Path, game: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    game = args.game.lower()
-    if game != "valorant":
-        parser.error(f"Template '{game}' is not available yet. Start with -g valorant.")
-
-    try:
-        config, config_path = load_config(args.config)
-        ensure_assets(config, config_path)
-    except Exception as exc:
-        print(f"[FasTrack] Config error: {exc}", file=sys.stderr)
-        return 2
+    game = (args.game or "").lower() or None
 
     if args.gui or not args.render and (args.in_time is None or args.out_time is None):
+        # The GUI resolves the template itself: --config, -g, or the last used one.
         try:
             from fasttrack.gui import launch_gui
             return int(launch_gui(args.video, game, args.config) or 0)
@@ -94,9 +86,22 @@ def main(argv: list[str] | None = None) -> int:
     video_path = Path(args.video).expanduser().resolve()
     try:
         info = probe_video(video_path)
+        if args.config:
+            config, config_path = load_config(args.config)
+        else:
+            from fasttrack.config import migrate_legacy_config, template_path, available_templates
+            migrate_legacy_config()
+            game_id = game or "valorant"
+            template = template_path(game_id)
+            if not template.is_file():
+                names = ", ".join(name for _, name in available_templates()) or "none installed"
+                parser.error(f"Template '{game_id}' not found in templates/. Available: {names}")
+            config, config_path = load_config(template)
+        ensure_assets(config, config_path)
+        game_id = game or (args.config and Path(args.config).stem.lower()) or "valorant"
         if args.out_time > info["duration"] + 0.05:
             parser.error(f"--out exceeds the recording duration ({info['duration']:.3f} seconds).")
-        output_path = Path(args.output).expanduser().resolve() if args.output else default_output(video_path, game)
+        output_path = Path(args.output).expanduser().resolve() if args.output else default_output(video_path, game_id)
         if args.print_command:
             from fasttrack.renderer import build_ffmpeg_command
             command, duration = build_ffmpeg_command(
@@ -107,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nClip duration: {duration:.3f}s | Source: {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
             return 0
 
-        print(f"FasTrack · Valorant · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
+        print(f"FasTrack · {game_id.title()} · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
         print(f"IN {args.in_time:.3f}s → OUT {args.out_time:.3f}s ({args.out_time - args.in_time:.3f}s)")
         print(f"Output: {output_path}")
 

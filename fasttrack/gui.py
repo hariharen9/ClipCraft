@@ -18,7 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from .assets import ensure_assets
-from .config import clone_config, image_content_info, load_config, load_state, resolve_asset, save_config, save_state
+from .config import (
+    available_templates, clone_config, image_content_info, load_config, load_state,
+    migrate_legacy_config, resolve_asset, save_config, save_state, template_path,
+)
 from .preview import layer_preview_image, render_background, to_qimage_array
 from .renderer import probe_video, run_render
 
@@ -300,18 +303,17 @@ class RenderWorker(QThread):
 
 
 class FasTrackWindow(QMainWindow):
-    def __init__(self, video_path: str | None, game: str = "valorant", config_path: str | Path | None = None):
+    def __init__(self, video_path: str | None, game: str | None = None, config_path: str | Path | None = None):
         super().__init__()
         self.setWindowTitle("FasTrack Video Editor — Gaming Shorts")
         self.resize(1510, 940)
         self.setMinimumSize(1100, 720)
-        self.config, self.config_path = load_config(config_path)
-        if game.lower() != "valorant":
-            raise ValueError(f"Template '{game}' is not installed yet. The first template is valorant.")
+        state = load_state()
+        self.config, self.config_path, self.game = self._resolve_template(game, config_path, state)
         ensure_assets(self.config, self.config_path)
         self.original_config = clone_config(self.config)
-        self.game = game
-        state = load_state()
+        self.template_name = str(self.config.get("name") or self.game.replace("_", " ").title())
+        self.setWindowTitle(f"FasTrack Video Editor — {self.template_name}")
         remembered = str(state.get("source_dir", ""))
         self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
         self.show_grips = bool(state.get("show_grips", True))
@@ -340,6 +342,22 @@ class FasTrackWindow(QMainWindow):
         else:
             QTimer.singleShot(100, self.browse_video)
 
+    def _resolve_template(self, game, config_path, state):
+        """Explicit --config wins; then -g; then the last used template; else the first installed."""
+        if config_path:
+            config, path = load_config(config_path)
+            game_id = (game or Path(config_path).stem).lower()
+            return config, path, game_id
+        migrate_legacy_config()
+        installed = available_templates()
+        if not installed:
+            raise ValueError("No game templates found in the templates/ folder.")
+        game_id = (game or str(state.get("last_template", "")) or "").lower()
+        if game_id not in dict(installed):
+            game_id = "valorant" if "valorant" in dict(installed) else installed[0][0]
+        config, path = load_config(template_path(game_id))
+        return config, path, game_id
+
     def _build_ui(self):
         central = QWidget()
         root = QVBoxLayout(central)
@@ -355,8 +373,13 @@ class FasTrackWindow(QMainWindow):
         self.browse_button.clicked.connect(self.browse_video)
         file_row.addWidget(self.browse_button)
         self.game_combo = QComboBox()
-        self.game_combo.addItem("Valorant", "valorant")
+        for template_id, template_name in available_templates():
+            self.game_combo.addItem(template_name, template_id)
+        combo_index = self.game_combo.findData(self.game)
+        if combo_index >= 0:
+            self.game_combo.setCurrentIndex(combo_index)
         self.game_combo.setMinimumWidth(125)
+        self.game_combo.currentIndexChanged.connect(self._switch_template)
         file_row.addWidget(QLabel("Template"))
         file_row.addWidget(self.game_combo)
         root.addLayout(file_row)
@@ -611,7 +634,7 @@ class FasTrackWindow(QMainWindow):
         history_row.addWidget(self.undo_button)
         history_row.addWidget(self.redo_button)
         actions_layout.addLayout(history_row)
-        save_button = QPushButton("Save layout to config.json")
+        save_button = QPushButton("Save layout to template")
         save_button.clicked.connect(self.save_layout)
         actions_layout.addWidget(save_button)
         reset_button = QPushButton("Reset to saved layout")
@@ -660,7 +683,7 @@ class FasTrackWindow(QMainWindow):
         self.out_spin.blockSignals(False)
         self.playhead = 0
         self.position_slider.setValue(0)
-        output = path.parent / "exports" / f"{path.stem}_valorant_short.mp4"
+        output = path.parent / "exports" / f"{path.stem}_{self.game}_short.mp4"
         self.output_edit.setText(str(output))
         self._capture_at_playhead()
         self.statusBar().showMessage(
@@ -881,6 +904,58 @@ class FasTrackWindow(QMainWindow):
         self.refresh_canvas()
         self.statusBar().showMessage(f"Reset {name} crop to config defaults")
 
+    # -- template switching ------------------------------------------------
+
+    def _switch_template(self, index: int):
+        game_id = str(self.game_combo.itemData(index) or "")
+        if not game_id or game_id == self.game:
+            return
+        try:
+            new_config, new_path = load_config(template_path(game_id))
+        except Exception as exc:
+            QMessageBox.critical(self, "Template error", str(exc))
+            current = self.game_combo.findData(self.game)
+            if current >= 0:
+                self.game_combo.blockSignals(True)
+                self.game_combo.setCurrentIndex(current)
+                self.game_combo.blockSignals(False)
+            return
+        # A different game is a different layout: undo history starts fresh.
+        self._pending_undo = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._update_undo_buttons()
+        self.game = game_id
+        self.config, self.config_path = new_config, new_path
+        ensure_assets(self.config, self.config_path)
+        self.template_name = str(self.config.get("name") or game_id.replace("_", " ").title())
+        self.setWindowTitle(f"FasTrack Video Editor — {self.template_name}")
+        self._remember_template(game_id)
+        self._rebuild_layer_combo()
+        if self.video_path:
+            video = Path(self.video_path)
+            self.output_edit.setText(str(video.parent / "exports" / f"{video.stem}_{game_id}_short.mp4"))
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Switched to the {self.template_name} template")
+
+    def _remember_template(self, game_id: str) -> None:
+        try:
+            app_state = load_state()
+            app_state["last_template"] = game_id
+            save_state(app_state)
+        except OSError:
+            pass  # Remembering the template must never break switching.
+
+    def _rebuild_layer_combo(self):
+        self.layer_combo.blockSignals(True)
+        self.layer_combo.clear()
+        for name, layer in sorted(self.config["layers"].items(), key=lambda pair: pair[1].get("z", 0)):
+            if name != "background":
+                self.layer_combo.addItem(name.replace("_", " ").title(), name)
+        self.layer_combo.blockSignals(False)
+        if self.layer_combo.count():
+            self.layer_combo.setCurrentIndex(0)
+
     # -- canvas interaction controller ------------------------------------
 
     def _toggle_grips(self, state: int):
@@ -1071,6 +1146,7 @@ class FasTrackWindow(QMainWindow):
         self._sync_render_config()
         encoder = str(self.encoder_combo.currentData())
         self.render_button.setEnabled(False)
+        self.game_combo.setEnabled(False)
         self.progress.setValue(0)
         self.render_status.setText("Starting FFmpeg…")
         self.worker = RenderWorker(
@@ -1086,6 +1162,7 @@ class FasTrackWindow(QMainWindow):
 
     def _render_finished(self, success: bool, message: str):
         self.render_button.setEnabled(True)
+        self.game_combo.setEnabled(True)
         if success:
             self.progress.setValue(100)
             self.render_status.setText("Render complete")

@@ -54,6 +54,8 @@ Double-click `run_gui.bat`, or:
 python fasttrack.py --gui
 ```
 
+The **Template** dropdown lists every game in `templates/` (one JSON file per game); the editor remembers your last one. Even faster: drag a video file onto **`quick_edit.pyw`** in Explorer — the editor opens with that clip already loaded, no console window and no Browse step (double-clicking `quick_edit.pyw` opens it empty).
+
 Choose a recording with **Browse**. To open the editor with a clip already loaded:
 
 ```powershell
@@ -75,7 +77,7 @@ FasTrack remembers the folder of the last recording you opened (stored in `fastt
 - For `main`, `killfeed` and `chat`, use **Source crop** to choose which part of the original 16:9 footage appears in that layer. Crop values are percentages of the original video frame.
 - Toggle **Visible** to hide a layer.
 - Click **Apply to preview** after changing numeric fields.
-- Click **Save layout to config.json** to keep your changes as the Valorant default.
+- Click **Save layout to template** to keep your changes in the template file selected in the Template dropdown (e.g. `templates/valorant.json`).
 
 The preview is a composition preview at a smaller canvas size; the final render uses your selected output dimensions and FFmpeg filters.
 
@@ -114,9 +116,34 @@ python fasttrack.py "D:\Clips\match.mp4" --in 72.5 --out 91 --print-command
 
 The default output location is an `exports` folder beside the input recording.
 
-## 5. Customize assets and branding
+## 5. Templates and adding a new game
 
-All template values live in **`config.json`**. Paths are relative to that file unless absolute paths are used.
+Everything about a game lives in one file: **`templates/<game>.json`**. The Template dropdown in the editor and the CLI `-g` flag both read that folder, so adding a game is just adding a file:
+
+1. Copy the closest template: `copy templates\valorant.json templates\cs2.json`.
+2. Edit it — set `"name": "CS2"` (shown in the dropdown), then adjust `layers` (positions, `crop` rectangles for the killfeed/chat windows), `background`, `branding` and asset paths for that game's HUD.
+3. Restart the editor. The new game appears in the Template dropdown and works with `-g cs2`.
+
+The editor's **Save layout to template** button writes back into the JSON of the currently selected game, so you can tune each game visually. A legacy `config.json` from before this structure is moved to `templates/valorant.json` automatically on first launch. App-level state (last source folder, last template, grip visibility) lives in `fasttrack_state.json`, separate from templates.
+
+Project layout:
+
+```
+Fastrack/
+├─ fasttrack.py            CLI + GUI entry point
+├─ fasttrack/              application code
+├─ templates/              one JSON per game (valorant.json, cs2.json, …)
+├─ assets/                 branding PNGs referenced by templates
+├─ quick_edit.pyw          drag & drop a video → editor opens it
+├─ install.bat             run once (creates .venv, installs dependencies)
+├─ run_gui.bat             daily driver: opens the editor
+├─ render.bat              CLI rendering helper
+└─ fasttrack_state.json    remembered UI choices (not a template)
+```
+
+## 6. Customize assets and branding
+
+All template values live in **`templates/<game>.json`** (e.g. `templates/valorant.json`). Paths are relative to that file unless absolute paths are used.
 
 ### Branding
 
@@ -130,7 +157,7 @@ Edit these values and restart the editor:
 }
 ```
 
-FasTrack regenerates the three starter PNGs (`assets/valorant_title.png`, `assets/socials.png`, `assets/channel_logo.png`) at launch. To use your own art, change the matching `asset` path under the corresponding layer in `config.json`, for example:
+FasTrack regenerates the three starter PNGs (`assets/valorant_title.png`, `assets/socials.png`, `assets/channel_logo.png`) at launch. To use your own art, change the matching `asset` path under the corresponding layer in the template JSON, for example:
 
 ```json
 "channel_logo": {
@@ -181,9 +208,9 @@ To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"
 
 `background.blur`, `background.brightness` and `background.saturation` control the blurred backdrop. Tweak them live with the **Background look** sliders in the editor (the preview updates as you drag, and Ctrl+Z undoes), then use **Save layout to config.json** to keep the values. The `canvas` section controls dimensions, FPS, encoder, quality and presets.
 
-## 6. Current scope / practical notes
+## 7. Current scope / practical notes
 
-- This first build contains the Valorant template only; the `-g` flag is structured so more game templates can be added later.
+- Game templates are data, not code: each `templates/*.json` adds a fully working game in the dropdown. Assets for new games can point at any PNG on disk.
 - The preview is a frame-based composition editor, not a full multitrack NLE. It is designed for selecting a short segment and adjusting the reusable layout quickly.
 - For the current template, the killfeed/chat source crop is a fixed rectangle. If the HUD moves during a recording (for example due to a different resolution or HUD scale), adjust the crop to match that recording before rendering.
 - The main gameplay crop defaults to filling its center window. If you prefer to preserve the full 16:9 gameplay frame, widen the main window or change its `fit` value to `contain`.

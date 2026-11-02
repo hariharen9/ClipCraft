@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any
 
 APP_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_CONFIG = APP_DIR / "config.json"
+DEFAULT_CONFIG = APP_DIR / "config.json"  # legacy location, auto-migrated into templates/
 STATE_FILE = APP_DIR / "fasttrack_state.json"
+TEMPLATES_DIR = APP_DIR / "templates"
 
 
 def load_config(path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
@@ -80,6 +81,44 @@ def validate_config(data: dict[str, Any]) -> None:
                 raise ValueError(f"Layer '{name}' crop must be [x, y, width, height]")
             if crop[2] <= 0 or crop[3] <= 0:
                 raise ValueError(f"Layer '{name}' crop width and height must be positive")
+
+
+def template_path(game: str) -> Path:
+    """Path of a game template: templates/<game>.json."""
+    return TEMPLATES_DIR / f"{game.lower()}.json"
+
+
+def available_templates() -> list[tuple[str, str]]:
+    """(game_id, display name) for every template in templates/, sorted by name."""
+    if not TEMPLATES_DIR.is_dir():
+        return []
+    templates: list[tuple[str, str]] = []
+    for path in sorted(TEMPLATES_DIR.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        name = str(data.get("name") or path.stem.replace("_", " ").title())
+        templates.append((path.stem.lower(), name))
+    return sorted(templates, key=lambda pair: pair[1].lower())
+
+
+def migrate_legacy_config() -> None:
+    """Move a legacy root config.json into templates/valorant.json.
+
+    The pre-templates build shipped exactly one game (Valorant), so a stray root
+    config.json can only be a Valorant layout. Runs on GUI startup; a no-op when
+    the legacy file is absent or already migrated.
+    """
+    if not DEFAULT_CONFIG.is_file():
+        return
+    TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
+    target = template_path("valorant")
+    if not target.is_file():
+        data = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+        data.setdefault("name", "Valorant")
+        save_config(data, target)
+    DEFAULT_CONFIG.unlink()
 
 
 def resolve_asset(config_path: Path, asset_path: str | Path) -> Path:
