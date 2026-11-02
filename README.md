@@ -216,6 +216,19 @@ To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"
 - The main gameplay crop defaults to filling its center window. If you prefer to preserve the full 16:9 gameplay frame, widen the main window or change its `fit` value to `contain`.
 - Rendering and preview are separate: dragging layers changes the layout, while source-crop field edits are applied with **Apply to preview**.
 
+## 8. Building FasTrack.exe (optional)
+
+```powershell
+.venv\Scripts\python.exe build_exe.py
+```
+
+Builds **`dist\FasTrack\`** — a self-contained folder with `FasTrack.exe` (panda icon, no console window). Zip that folder and share it: recipients double-click the exe or drop a video file onto it, exactly like `quick_edit.pyw`. They still need FFmpeg/ffprobe on PATH, and NVIDIA drivers for NVENC (CPU fallback works everywhere).
+
+- Game templates are copied **next to the exe on first launch** and stay user-editable there — add a new game afterwards by dropping its JSON into `templates\` beside `FasTrack.exe`.
+- If a template references artwork that does not exist on a machine, FasTrack automatically falls back to the generated starter images so every layer still renders.
+- The exe is GUI-only (windowed build); headless/terminal rendering stays with the Python CLI.
+- The build uses `--onedir` for fast startup; swap `--onedir` for `--onefile` inside `build_exe.py` if you prefer a single file (PySide6 builds launch much slower that way).
+
 ## Troubleshooting
 
 **`FFmpeg was not found`** — install FFmpeg and add the folder containing `ffmpeg.exe` and `ffprobe.exe` to the Windows `PATH`, then reopen the terminal/editor.

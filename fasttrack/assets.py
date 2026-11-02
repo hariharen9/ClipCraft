@@ -115,6 +115,16 @@ def ensure_assets(config: dict, config_path: Path) -> dict[str, Path]:
         if not path.is_absolute():
             path = config_path.parent / path
         path = path.resolve()
+        if not path.is_file():
+            # Artwork missing (e.g. the template was shared to a machine without the
+            # original files): fall back to the generated starter image so the layer
+            # still renders, and keep the config pointing at the portable copy.
+            fallback = (config_path.parent / default_rel).resolve()
+            fallback.parent.mkdir(parents=True, exist_ok=True)
+            generator(fallback)
+            layer["asset"] = default_rel
+            output[layer_name] = fallback
+            continue
         output[layer_name] = path
         if path == (config_path.parent / default_rel).resolve():
             path.parent.mkdir(parents=True, exist_ok=True)

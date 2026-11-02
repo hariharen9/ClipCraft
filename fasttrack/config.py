@@ -2,10 +2,28 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
-APP_DIR = Path(__file__).resolve().parent.parent
+
+def _frozen_layout() -> tuple[Path | None, Path | None]:
+    """(writable app dir, read-only bundled resources) when running as an exe; (None, None) in source runs."""
+    if not getattr(sys, "frozen", False):
+        return None, None
+    app_dir = Path(sys.executable).resolve().parent
+    resource_dir = Path(getattr(sys, "_MEIPASS", app_dir / "_internal"))
+    return app_dir, resource_dir
+
+
+_APP_DIR, _RESOURCE_DIR = _frozen_layout()
+FROZEN = _APP_DIR is not None
+if FROZEN:
+    APP_DIR = _APP_DIR
+else:
+    APP_DIR = Path(__file__).resolve().parent.parent
+    _RESOURCE_DIR = APP_DIR
 DEFAULT_CONFIG = APP_DIR / "config.json"  # legacy location, auto-migrated into templates/
 STATE_FILE = APP_DIR / "fasttrack_state.json"
 TEMPLATES_DIR = APP_DIR / "templates"
@@ -119,6 +137,20 @@ def migrate_legacy_config() -> None:
         data.setdefault("name", "Valorant")
         save_config(data, target)
     DEFAULT_CONFIG.unlink()
+
+
+def ensure_bundled_templates() -> None:
+    """First run of a frozen build: copy the bundled game templates next to the exe.
+
+    Templates must live beside FasTrack.exe because they are user-editable (the
+    editor saves into them and new games are added by dropping files there);
+    the copies inside the executable bundle are only a starting point.
+    """
+    if not FROZEN:
+        return
+    bundled = _RESOURCE_DIR / "templates"
+    if bundled.is_dir() and not TEMPLATES_DIR.is_dir():
+        shutil.copytree(bundled, TEMPLATES_DIR)
 
 
 def resolve_asset(config_path: Path, asset_path: str | Path) -> Path:

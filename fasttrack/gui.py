@@ -349,6 +349,7 @@ class FasTrackWindow(QMainWindow):
             game_id = (game or Path(config_path).stem).lower()
             return config, path, game_id
         migrate_legacy_config()
+        ensure_bundled_templates()
         installed = available_templates()
         if not installed:
             raise ValueError("No game templates found in the templates/ folder.")

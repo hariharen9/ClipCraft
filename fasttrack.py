@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -60,6 +61,13 @@ def default_output(video_path: Path, game: str) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windowed executables have no usable console, and their stdout can be a
+    # Windows-locale codec that chokes on Unicode banners (→, ·). Route frozen
+    # CLI output to a UTF-8-safe void writer so prints can never crash a render.
+    if sys.stdout is None or getattr(sys, "frozen", False):
+        sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    if sys.stderr is None or getattr(sys, "frozen", False):
+        sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
     game = (args.game or "").lower() or None
@@ -89,8 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.config:
             config, config_path = load_config(args.config)
         else:
-            from fasttrack.config import migrate_legacy_config, template_path, available_templates
+            from fasttrack.config import (
+                available_templates, ensure_bundled_templates, migrate_legacy_config, template_path,
+            )
             migrate_legacy_config()
+            ensure_bundled_templates()
             game_id = game or "valorant"
             template = template_path(game_id)
             if not template.is_file():
