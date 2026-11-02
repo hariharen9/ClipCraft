@@ -11,7 +11,7 @@ The same source recording is used for four moving-picture layers:
 3. A separate top-right killfeed crop.
 4. A separate lower-left chat crop.
 
-Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its *output rectangle* and its *source crop* are both editable. Image layers are never stretched: they keep their original aspect ratio inside their rectangle.
+Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its *output rectangle* and its *source crop* are both editable. Image layers can be placed and resized freely; they always start at their natural aspect ratio.
 
 Default output: **1080 × 1920, 60 fps, MP4/H.264**, with the source audio retained. Rendering uses NVIDIA NVENC on a supported NVIDIA driver / FFmpeg build; `auto` falls back to CPU x264 if NVENC fails.
 
@@ -67,8 +67,10 @@ FastTrack remembers the folder of the last recording you opened (stored in `fast
 ### Layout editing
 
 - Choose a layer in the right-hand **Layer editor**.
-- Drag the layer in the preview to reposition it.
-- Drag its small cyan bottom-right handle to resize it.
+- Click a layer to select it (the inspector follows), then drag it anywhere in the preview to reposition it.
+- Resize with the eight grips pinned to the layer's corners and edges — one grip per corner, plus four edge grips for width/height only. Each grip keeps the opposite corner or edge anchored while you drag. The grips are real interactive handles, so they work even on PNGs that are mostly transparent. **Resize grips** above the preview toggles them off for a clean look (the choice is remembered; the position/size fields still resize layers).
+- Hold **Shift** while dragging a grip to keep the layer's current proportions. Image layers can be stretched freely otherwise; use **Snap to image aspect** in the layer editor to return to the image's natural shape at any time.
+- **Ctrl+Z** undoes any canvas or layout change (moves, resizes, crop and asset edits, visibility toggles, layout resets); **Ctrl+Shift+Z** redoes. The ↶/↷ buttons in the Template panel do the same, with up to 100 steps.
 - Use **Output position / size** to set its rectangle as percentages of the portrait canvas.
 - For `main`, `killfeed` and `chat`, use **Source crop** to choose which part of the original 16:9 footage appears in that layer. Crop values are percentages of the original video frame.
 - Toggle **Visible** to hide a layer.
@@ -162,17 +164,17 @@ For video layers, `crop` is another normalized `[x, y, width, height]` rectangle
 
 If your recorded HUD position differs from the reference, adjust `crop` rather than moving the whole recording. Adjust `rect` to move or resize the rendered crop on the portrait canvas.
 
-### Image layers keep their original shape
+### Image layers: free placement and resizing
 
-Image layers (`valorant_title`, `socials`, `channel_logo`, or any picture you import) are never stretched. FastTrack trims fully transparent borders first, then scales the visible content to the largest size that fits inside the layer `rect` while preserving the original aspect ratio, centered in that rectangle. Dragging the corner handle in the editor also keeps the aspect ratio locked, so pictures can only be resized proportionally.
+Image layers (`valorant_title`, `socials`, `channel_logo`, or any picture you import) can be moved and resized freely — the picture fills its rectangle exactly as arranged in the editor, so what you draw is what renders. Fully transparent borders are trimmed automatically first. When you import a picture, the rectangle is matched to the image's own aspect ratio so it never starts out distorted. If a rectangle ever drifts out of shape, **Snap to image aspect** in the layer editor restores the natural proportions, and holding **Shift** while dragging the corner handle resizes proportionally.
 
-If you specifically want a picture stretched to fill its whole rectangle, set `"fit": "fill"` on that image layer:
+To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"` on that image layer. It is then scaled to the largest undistorted size that fits inside its rectangle, centered:
 
 ```json
 "valorant_title": {
   "kind": "image",
   "asset": "assets/valorant_title.png",
-  "fit": "fill",
+  "fit": "contain",
   "rect": [0.128, 0.052, 0.803, 0.065]
 }
 ```

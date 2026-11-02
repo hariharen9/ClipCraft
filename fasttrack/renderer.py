@@ -157,13 +157,14 @@ def build_filter_complex(
         if bbox is not None and tuple(bbox) != (0, 0, native_w, native_h):
             source_w, source_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
             trim = f"crop={source_w}:{source_h}:{bbox[0]}:{bbox[1]},"
-        if layer.get("fit", "contain") == "fill":
-            draw_w, draw_h, draw_x, draw_y = w, h, x, y
-        else:
-            # Keep the asset's original aspect ratio, centered inside the layer rectangle.
+        if layer.get("fit", "fill") == "contain":
+            # Opt-in: keep the asset's original aspect ratio, centered inside the rectangle.
             draw_w, draw_h = contain_fit(source_w, source_h, w, h)
             draw_x = x + (w - draw_w) // 2
             draw_y = y + (h - draw_h) // 2
+        else:
+            # Free transform: the picture fills its rectangle exactly, as arranged in the editor.
+            draw_w, draw_h, draw_x, draw_y = w, h, x, y
         image_label = f"img_{name}"
         parts.append(
             f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"

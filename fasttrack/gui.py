@@ -7,102 +7,260 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSizeF
-from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSizeF, QRectF
+from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
-    QProgressBar, QScrollArea, QSlider, QSpinBox, QSplitter, QStatusBar,
+    QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QProgressBar, QScrollArea, QSlider, QSpinBox, QSplitter, QStatusBar,
     QVBoxLayout, QWidget,
 )
 
 from .assets import ensure_assets
-from .config import clone_config, load_config, load_state, save_config, save_state
+from .config import clone_config, image_content_info, load_config, load_state, resolve_asset, save_config, save_state
 from .preview import layer_preview_image, render_background, to_qimage_array
 from .renderer import probe_video, run_render
 
 
-class LayerItem(QGraphicsPixmapItem):
-    """A canvas layer with drag and bottom-right resize interaction."""
+HANDLE_SIZE = 6.0
+MIN_LAYER_SIZE = 10.0
 
-    def __init__(self, name: str, pixmap: QPixmap, rect: tuple[float, float, float, float], on_change,
-                 preserve_aspect: bool = False, aspect_ratio: float | None = None):
-        super().__init__(pixmap)
-        self.name = name
-        self.on_change = on_change
-        self._source_pixmap = pixmap
-        self._resizing = False
-        self._last_scene_pos = None
-        self._min_size = 12
-        self._preserve_aspect = preserve_aspect
-        self._aspect_ratio = aspect_ratio
-        self.setPos(rect[0], rect[1])
-        self.setZValue(10)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
-        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
 
-    def set_source_pixmap(self, pixmap: QPixmap, keep_size: bool = True) -> None:
-        self._source_pixmap = pixmap
-        if keep_size:
-            size = self.pixmap().size()
-            self.setPixmap(pixmap.scaled(size, Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        else:
-            self.setPixmap(pixmap)
+class HandleItem(QGraphicsRectItem):
+    """A resize grip pinned to an edge or corner of a LayerItem.
 
-    def set_layer_size(self, width: float, height: float) -> None:
-        width_i = max(self._min_size, int(round(width)))
-        if self._preserve_aspect and self._aspect_ratio:
-            height_i = max(2, int(round(width_i / self._aspect_ratio)))
-        else:
-            height_i = max(self._min_size, int(round(height)))
-        self.setPixmap(self._source_pixmap.scaled(
-            width_i, height_i, Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        ))
-        self.update()
+    Handles are dedicated scene items, so they stay clickable regardless of how
+    much transparent padding the layer artwork has. Roles: nw, n, ne, e, se, s, sw, w.
+    """
+
+    CURSORS = {
+        "nw": Qt.CursorShape.SizeFDiagCursor, "ne": Qt.CursorShape.SizeBDiagCursor,
+        "se": Qt.CursorShape.SizeFDiagCursor, "sw": Qt.CursorShape.SizeBDiagCursor,
+        "n": Qt.CursorShape.SizeVerCursor, "s": Qt.CursorShape.SizeVerCursor,
+        "e": Qt.CursorShape.SizeHorCursor, "w": Qt.CursorShape.SizeHorCursor,
+    }
+
+    def __init__(self, layer: "LayerItem", role: str):
+        super().__init__(QRectF(-HANDLE_SIZE / 2, -HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE))
+        self.layer = layer
+        self.role = role
+        self._drag_start = None
+        self.setBrush(QBrush(QColor(248, 250, 252, 230)))
+        self.setPen(QPen(QColor(30, 200, 190), 1.0))
+        self.setCursor(QCursor(self.CURSORS[role]))
+        self.setAcceptHoverEvents(True)
+        self.setZValue(5)
+
+    def hoverEnterEvent(self, event):
+        self.setBrush(QBrush(QColor(40, 235, 220)))
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setBrush(QBrush(QColor(248, 250, 252, 230)))
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        p = event.pos()
-        bounds = self.boundingRect()
-        self._resizing = p.x() >= bounds.width() - 18 and p.y() >= bounds.height() - 18
-        self._last_scene_pos = event.scenePos()
-        self.setSelected(True)
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        layer = self.layer
+        self._drag_start = (*layer.geometry_tuple(), event.scenePos())
+        layer.setSelected(True)
+        layer.begin_interaction("Resize")
         event.accept()
 
     def mouseMoveEvent(self, event):
-        if self._last_scene_pos is None:
+        if self._drag_start is None:
             event.ignore()
             return
-        delta = event.scenePos() - self._last_scene_pos
-        self._last_scene_pos = event.scenePos()
-        if self._resizing:
-            current = self.boundingRect()
-            scene = self.scene()
-            max_w = scene.sceneRect().width() - self.x() if scene else current.width() + delta.x()
-            max_h = scene.sceneRect().height() - self.y() if scene else current.height() + delta.y()
-            new_w = min(max_w, current.width() + delta.x())
-            if self._preserve_aspect and self._aspect_ratio:
-                # Corner resize keeps the image's original aspect ratio.
-                new_w = max(self._min_size, min(new_w, max_h * self._aspect_ratio))
-                self.set_layer_size(new_w, new_w / self._aspect_ratio)
-            else:
-                self.set_layer_size(new_w, min(max_h, current.height() + delta.y()))
-        else:
-            scene = self.scene()
-            if scene:
-                scene_rect = scene.sceneRect()
-                new_x = max(0, min(scene_rect.width() - self.boundingRect().width(), self.x() + delta.x()))
-                new_y = max(0, min(scene_rect.height() - self.boundingRect().height(), self.y() + delta.y()))
-                self.setPos(new_x, new_y)
+        self.layer.resize_from_handle(
+            self.role, self._drag_start, event.scenePos(),
+            bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+        )
         event.accept()
 
     def mouseReleaseEvent(self, event):
-        self._last_scene_pos = None
-        self._resizing = False
-        self.on_change(self.name, self)
+        if self._drag_start is None:
+            event.ignore()
+            return
+        self._drag_start = None
+        self.layer.commit("Resize")
         event.accept()
+
+
+class LayerItem(QGraphicsPixmapItem):
+    """A canvas layer: drag the body to move, drag a grip to resize.
+
+    All geometry lives in preview-canvas pixels (360x640 scene units) and is written
+    back to the config as normalized values through the window controller.
+    """
+
+    HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
+
+    def __init__(self, name: str, pixmap: QPixmap, rect: tuple[float, float, float, float],
+                 controller, preserve_aspect: bool = False, aspect_ratio: float | None = None):
+        super().__init__(pixmap)
+        self.name = name
+        self.controller = controller
+        self._source_pixmap = pixmap
+        self._preserve_aspect = preserve_aspect
+        self._aspect_ratio = aspect_ratio
+        self._min_size = MIN_LAYER_SIZE
+        self._moving = False
+        self._move_step = None
+        self._interaction_rect = None
+        # Qt pads selectable pixmap items' boundingRect by 1px, so the true layer
+        # geometry is tracked here and never derived from boundingRect().
+        self._geo = QRectF(0.0, 0.0, max(2.0, float(rect[2])), max(2.0, float(rect[3])))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        # The whole rectangle is interactive, including transparent PNG regions.
+        self.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
+        self.setZValue(10)
+        self._handles = {role: HandleItem(self, role) for role in self.HANDLES}
+        for handle in self._handles.values():
+            handle.setParentItem(self)
+        self.set_pos_size(*rect)
+
+    def set_grips_visible(self, visible: bool) -> None:
+        for handle in self._handles.values():
+            handle.setVisible(visible)
+
+    # -- geometry ---------------------------------------------------------
+
+    def geometry_tuple(self) -> tuple[float, float, float, float]:
+        """(x, y, width, height) in scene pixels, free of Qt's selectable-item padding."""
+        return self.x(), self.y(), self._geo.width(), self._geo.height()
+
+    def set_pos_size(self, x: float, y: float, width: float, height: float) -> None:
+        width = max(self._min_size, width)
+        height = max(self._min_size, height)
+        self._geo = QRectF(0.0, 0.0, width, height)
+        self.setPos(x, y)
+        self.setPixmap(self._source_pixmap.scaled(
+            max(2, int(round(width))), max(2, int(round(height))),
+            Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
+        self.update_handles()
+
+    def update_handles(self) -> None:
+        w = self._geo.width()
+        h = self._geo.height()
+        anchors = {
+            "nw": (0.0, 0.0), "n": (w / 2, 0.0), "ne": (w, 0.0), "e": (w, h / 2),
+            "se": (w, h), "s": (w / 2, h), "sw": (0.0, h), "w": (0.0, h / 2),
+        }
+        for role, (ax, ay) in anchors.items():
+            self._handles[role].setPos(ax, ay)
+
+    def resize_from_handle(self, role: str, start, scene_pos, shift_held: bool = False) -> None:
+        x0, y0, w0, h0, grab = start
+        min_s = self._min_size
+        dx = scene_pos.x() - grab.x()
+        dy = scene_pos.y() - grab.y()
+        left, top = x0, y0
+        right, bottom = x0 + w0, y0 + h0
+
+        if "e" in role:
+            right = max(left + min_s, right + dx)
+        if "s" in role:
+            bottom = max(top + min_s, bottom + dy)
+        if "w" in role:
+            left = min(right - min_s, left + dx)
+        if "n" in role:
+            top = min(bottom - min_s, top + dy)
+
+        lock = self._preserve_aspect or shift_held
+        if lock:
+            # Contain-mode layers keep the image's native aspect ratio; Shift keeps
+            # whatever proportions the rectangle currently has.
+            if self._preserve_aspect and self._aspect_ratio:
+                aspect = self._aspect_ratio
+            elif h0 > 0:
+                aspect = w0 / h0
+            else:
+                aspect = None
+            if aspect:
+                if role in ("e", "w"):
+                    # Vertical center stays put while the width drives the scale.
+                    h = (right - left) / aspect
+                    cy = y0 + h0 / 2
+                    top, bottom = cy - h / 2, cy + h / 2
+                elif role in ("n", "s"):
+                    # Horizontal center stays put while the height drives the scale.
+                    w = (bottom - top) * aspect
+                    cx = x0 + w0 / 2
+                    left, right = cx - w / 2, cx + w / 2
+                elif role in ("se", "sw"):
+                    # Corner grips keep the opposite corner anchored.
+                    bottom = top + (right - left) / aspect
+                else:  # nw, ne
+                    top = bottom - (right - left) / aspect
+
+        scene = self.scene()
+        if scene:
+            bounds = scene.sceneRect()
+            left = max(bounds.left(), left)
+            top = max(bounds.top(), top)
+            right = min(bounds.right(), right)
+            bottom = min(bounds.bottom(), bottom)
+        self.set_pos_size(left, top, right - left, bottom - top)
+
+    # -- interaction ------------------------------------------------------
+
+    def begin_interaction(self, action: str) -> None:
+        self._interaction_rect = self.geometry_tuple()
+        if self.controller:
+            self.controller.layer_interaction_started(self.name, action)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        self._moving = True
+        self._move_step = event.scenePos()
+        self.setSelected(True)
+        self.begin_interaction("Move")
+        if self.controller:
+            self.controller.layer_selected(self.name)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._moving or self._move_step is None:
+            event.ignore()
+            return
+        delta = event.scenePos() - self._move_step
+        self._move_step = event.scenePos()
+        x, y, w, h = self.geometry_tuple()
+        scene = self.scene()
+        if scene:
+            bounds = scene.sceneRect()
+            x = max(bounds.left(), min(bounds.right() - w, x + delta.x()))
+            y = max(bounds.top(), min(bounds.bottom() - h, y + delta.y()))
+        else:
+            x, y = x + delta.x(), y + delta.y()
+        self.setPos(x, y)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if not self._moving:
+            event.ignore()
+            return
+        self._moving = False
+        self._move_step = None
+        self.commit("Move")
+        event.accept()
+
+    def commit(self, action: str) -> None:
+        current = self.geometry_tuple()
+        changed = self._interaction_rect is not None and any(
+            abs(a - b) > 0.05 for a, b in zip(self._interaction_rect, current)
+        )
+        self._interaction_rect = None
+        if changed and self.controller:
+            self.controller.layer_committed(self.name, self, action)
 
     def paint(self, painter: QPainter, option, widget=None):
         super().paint(painter, option, widget)
@@ -110,11 +268,7 @@ class LayerItem(QGraphicsPixmapItem):
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.setPen(QPen(QColor(40, 235, 220), 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-            painter.drawRect(self.boundingRect().adjusted(0.5, 0.5, -0.5, -0.5))
-            handle = self.boundingRect()
-            painter.setPen(QPen(QColor(10, 25, 35), 1))
-            painter.setBrush(QBrush(QColor(40, 235, 220)))
-            painter.drawRect(handle.right() - 8, handle.bottom() - 8, 8, 8)
+            painter.drawRect(self._geo.adjusted(0.5, 0.5, -0.5, -0.5))
 
 
 class RenderWorker(QThread):
@@ -159,6 +313,7 @@ class FastTrackWindow(QMainWindow):
         state = load_state()
         remembered = str(state.get("source_dir", ""))
         self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
+        self.show_grips = bool(state.get("show_grips", True))
         self.video_path: str | None = None
         self.video_info: dict[str, Any] | None = None
         self.capture: cv2.VideoCapture | None = None
@@ -170,7 +325,14 @@ class FastTrackWindow(QMainWindow):
         self.pending_capture = False
         self.layer_items: dict[str, LayerItem] = {}
         self.worker: RenderWorker | None = None
+        self._undo_stack: list[tuple[str, dict[str, Any]]] = []
+        self._redo_stack: list[tuple[str, dict[str, Any]]] = []
+        self._pending_undo: tuple[str, dict[str, Any]] | None = None
         self._build_ui()
+        undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
+        undo_shortcut.activated.connect(self.undo)
+        redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
+        redo_shortcut.activated.connect(self.redo)
         if video_path:
             self.load_video(video_path)
         else:
@@ -312,7 +474,12 @@ class FastTrackWindow(QMainWindow):
         header = QHBoxLayout()
         header.addWidget(QLabel("Live composition preview"))
         header.addStretch(1)
-        header.addWidget(QLabel("Drag to move · drag cyan corner to resize"))
+        header.addWidget(QLabel("Drag to move · drag the grips to resize · Shift = keep aspect"))
+        self.grips_check = QCheckBox("Resize grips")
+        self.grips_check.setChecked(self.show_grips)
+        self.grips_check.setToolTip("Show or hide the resize grips (resizing is still available via the position/size fields)")
+        self.grips_check.stateChanged.connect(self._toggle_grips)
+        header.addWidget(self.grips_check)
         layout.addLayout(header)
         self.scene = QGraphicsScene(self)
         self.scene.setSceneRect(0, 0, 360, 640)
@@ -360,7 +527,9 @@ class FastTrackWindow(QMainWindow):
         layer_layout.addWidget(self.asset_group)
 
         geometry_group = QGroupBox("Output position / size (% of canvas)")
-        geometry_form = QFormLayout(geometry_group)
+        geometry_inner = QVBoxLayout(geometry_group)
+        geometry_inner.setContentsMargins(6, 4, 6, 6)
+        geometry_form = QFormLayout()
         self.geom_fields = {}
         for key, title in (("x", "X"), ("y", "Y"), ("w", "Width"), ("h", "Height")):
             spin = QDoubleSpinBox()
@@ -370,6 +539,11 @@ class FastTrackWindow(QMainWindow):
             spin.setSuffix(" %")
             self.geom_fields[key] = spin
             geometry_form.addRow(title, spin)
+        geometry_inner.addLayout(geometry_form)
+        self.snap_aspect_button = QPushButton("Snap to image aspect")
+        self.snap_aspect_button.setToolTip("Fit the rectangle to the image's own aspect ratio, kept centered")
+        self.snap_aspect_button.clicked.connect(self.snap_image_aspect)
+        geometry_inner.addWidget(self.snap_aspect_button)
         layer_layout.addWidget(geometry_group)
 
         crop_group = QGroupBox("Source crop (% of original footage)")
@@ -395,6 +569,18 @@ class FastTrackWindow(QMainWindow):
 
         actions_group = QGroupBox("Template")
         actions_layout = QVBoxLayout(actions_group)
+        history_row = QHBoxLayout()
+        self.undo_button = QPushButton("↶ Undo")
+        self.undo_button.setToolTip("Undo the last canvas or layout change (Ctrl+Z)")
+        self.undo_button.setEnabled(False)
+        self.undo_button.clicked.connect(self.undo)
+        self.redo_button = QPushButton("↷ Redo")
+        self.redo_button.setToolTip("Redo an undone change (Ctrl+Shift+Z)")
+        self.redo_button.setEnabled(False)
+        self.redo_button.clicked.connect(self.redo)
+        history_row.addWidget(self.undo_button)
+        history_row.addWidget(self.redo_button)
+        actions_layout.addLayout(history_row)
         save_button = QPushButton("Save layout to config.json")
         save_button.clicked.connect(self.save_layout)
         actions_layout.addWidget(save_button)
@@ -540,6 +726,7 @@ class FastTrackWindow(QMainWindow):
         is_image = layer.get("kind") == "image"
         self.asset_group.setVisible(is_image)
         self.asset_edit.setText(str(layer.get("asset", "")) if is_image else "")
+        self.snap_aspect_button.setEnabled(is_image)
 
     def browse_asset(self):
         name = self._active_layer_name()
@@ -561,22 +748,67 @@ class FastTrackWindow(QMainWindow):
             asset_path = str(Path(filename).relative_to(self.config_path.parent))
         except ValueError:
             asset_path = filename  # keep absolute if outside project dir
+        self._snapshot(f"Replace image {name.replace('_', ' ')}")
         layer["asset"] = asset_path
         self.asset_edit.setText(asset_path)
+        self._fit_layer_to_asset(name)
         self.refresh_canvas()
-        self.statusBar().showMessage(f"Asset for '{name}' updated — click Save to persist")
+        self.statusBar().showMessage(f"Asset for '{name}' updated — rectangle matched to the image's aspect")
+
+    def _fit_layer_to_asset(self, name: str) -> None:
+        """Reshape the layer rectangle to the image's own aspect ratio, kept centered."""
+        layer = self.config["layers"].get(name)
+        if not layer or layer.get("kind") != "image":
+            return
+        asset = resolve_asset(self.config_path, layer.get("asset", ""))
+        if not asset.is_file():
+            return
+        native_w, native_h, bbox = image_content_info(asset)
+        if bbox:
+            native_w, native_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if native_w <= 0 or native_h <= 0:
+            return
+        canvas_w = int(self.config["canvas"].get("width", 1080))
+        canvas_h = int(self.config["canvas"].get("height", 1920))
+        x, y, w, h = [float(v) for v in layer.get("rect", [0.1, 0.1, 0.2, 0.2])]
+        pw, ph = w * canvas_w, h * canvas_h
+        scale = min(pw / native_w, ph / native_h)
+        dw, dh = max(2.0, native_w * scale), max(2.0, native_h * scale)
+        layer["rect"] = [
+            x + (pw - dw) / 2.0 / canvas_w,
+            y + (ph - dh) / 2.0 / canvas_h,
+            dw / canvas_w,
+            dh / canvas_h,
+        ]
+        if self._active_layer_name() == name:
+            for key, value in zip(("x", "y", "w", "h"), layer["rect"]):
+                self.geom_fields[key].blockSignals(True)
+                self.geom_fields[key].setValue(value * 100.0)
+                self.geom_fields[key].blockSignals(False)
+
+    def snap_image_aspect(self):
+        name = self._active_layer_name()
+        if self.config["layers"].get(name, {}).get("kind") != "image":
+            self.statusBar().showMessage(f"Layer '{name}' is not an image layer")
+            return
+        self._snapshot(f"Snap aspect {name.replace('_', ' ')}")
+        self._fit_layer_to_asset(name)
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"{name} rectangle matched to the image's aspect ratio")
 
     def toggle_layer_visible(self, state: int):
         name = self._active_layer_name()
         visible = state == int(Qt.CheckState.Checked.value)
+        self._snapshot(f"{'Show' if visible else 'Hide'} {name.replace('_', ' ')}")
         self.config["layers"][name]["visible"] = visible
         item = self.layer_items.get(name)
         if item:
-            item.setVisible(visible)
+            item.setVisible(visible)  # Child resize grips hide with the layer.
 
     def apply_layer_changes(self):
         name = self._active_layer_name()
         layer = self.config["layers"][name]
+        self._snapshot(f"Edit {name.replace('_', ' ')}")
         rect = [self.geom_fields[k].value() / 100.0 for k in ("x", "y", "w", "h")]
         rect[2] = max(0.005, rect[2])
         rect[3] = max(0.005, rect[3])
@@ -589,9 +821,9 @@ class FastTrackWindow(QMainWindow):
             crop[1] = min(crop[1], 1.0 - crop[3])
             layer["crop"] = crop
         self.refresh_canvas()
-        if layer.get("kind") == "image" and layer.get("fit", "contain") != "fill":
+        if layer.get("kind") == "image":
             self.statusBar().showMessage(
-                f"Updated {name} layer — images keep their original aspect ratio inside the rectangle"
+                f"Updated {name} layer — drag the corner to resize freely; hold Shift to keep the aspect ratio"
             )
         else:
             self.statusBar().showMessage(f"Updated {name} layer")
@@ -602,6 +834,7 @@ class FastTrackWindow(QMainWindow):
         if layer.get("kind") != "video":
             self.statusBar().showMessage(f"Layer '{name}' is not a video layer")
             return
+        self._snapshot(f"Reset crop {name.replace('_', ' ')}")
         try:
             fresh_cfg, _ = load_config(self.config_path)
             default_crop = fresh_cfg.get("layers", {}).get(name, {}).get("crop")
@@ -618,15 +851,83 @@ class FastTrackWindow(QMainWindow):
         self.refresh_canvas()
         self.statusBar().showMessage(f"Reset {name} crop to config defaults")
 
-    def _layer_dragged(self, name: str, item: LayerItem):
-        rect = [item.x() / 360.0, item.y() / 640.0,
-                item.boundingRect().width() / 360.0, item.boundingRect().height() / 640.0]
+    # -- canvas interaction controller ------------------------------------
+
+    def _toggle_grips(self, state: int):
+        visible = state == int(Qt.CheckState.Checked.value)
+        self.show_grips = visible
+        for item in self.layer_items.values():
+            item.set_grips_visible(visible)
+        try:
+            app_state = load_state()
+            app_state["show_grips"] = visible
+            save_state(app_state)
+        except OSError:
+            pass  # Preference persistence must never break the toggle.
+        if visible:
+            self.statusBar().showMessage("Resize grips shown")
+        else:
+            self.statusBar().showMessage("Resize grips hidden — use the position/size fields to resize")
+
+    def layer_selected(self, name: str):
+        index = self.layer_combo.findData(name)
+        if index >= 0 and index != self.layer_combo.currentIndex():
+            self.layer_combo.setCurrentIndex(index)
+
+    def layer_interaction_started(self, name: str, action: str):
+        """Capture a pre-interaction snapshot so a committed drag can be undone."""
+        self._pending_undo = (f"{action} {name.replace('_', ' ')}", clone_config(self.config))
+
+    def layer_committed(self, name: str, item: LayerItem, action: str):
+        ix, iy, iw, ih = item.geometry_tuple()
+        rect = [ix / 360.0, iy / 640.0, iw / 360.0, ih / 640.0]
         self.config["layers"][name]["rect"] = rect
         if self._active_layer_name() == name:
             for key, value in zip(("x", "y", "w", "h"), rect):
                 self.geom_fields[key].blockSignals(True)
                 self.geom_fields[key].setValue(value * 100)
                 self.geom_fields[key].blockSignals(False)
+        if self._pending_undo:
+            self._push_undo(*self._pending_undo)
+            self._pending_undo = None
+
+    # -- undo / redo -------------------------------------------------------
+
+    def _snapshot(self, label: str) -> None:
+        """Push the current state onto the undo stack before a mutation."""
+        self._push_undo(label, clone_config(self.config))
+
+    def _push_undo(self, label: str, snapshot: dict[str, Any]) -> None:
+        self._undo_stack.append((label, snapshot))
+        if len(self._undo_stack) > 100:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self._update_undo_buttons()
+
+    def _update_undo_buttons(self):
+        self.undo_button.setEnabled(bool(self._undo_stack))
+        self.redo_button.setEnabled(bool(self._redo_stack))
+
+    def undo(self):
+        if not self._undo_stack:
+            return
+        label, snapshot = self._undo_stack.pop()
+        self._redo_stack.append((label, clone_config(self.config)))
+        self._restore_snapshot(snapshot)
+        self.statusBar().showMessage(f"Undid: {label}")
+
+    def redo(self):
+        if not self._redo_stack:
+            return
+        label, snapshot = self._redo_stack.pop()
+        self._undo_stack.append((label, clone_config(self.config)))
+        self._restore_snapshot(snapshot)
+        self.statusBar().showMessage(f"Redid: {label}")
+
+    def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self.config = clone_config(snapshot)
+        self.refresh_canvas()
+        self._update_undo_buttons()
 
     def refresh_canvas(self):
         if self.current_frame is None:
@@ -643,7 +944,7 @@ class FastTrackWindow(QMainWindow):
         for name, layer in sorted_layers:
             if name == "background" or not layer.get("visible", True):
                 continue
-            image = layer_preview_image(
+            image, image_aspect = layer_preview_image(
                 name, layer, self.current_frame, canvas_w, canvas_h, self.config_path
             )
             if image is None:
@@ -653,16 +954,18 @@ class FastTrackWindow(QMainWindow):
             px, py, pw, ph = x * canvas_w, y * canvas_h, w * canvas_w, h * canvas_h
             preserve_aspect = False
             aspect_ratio = None
-            if layer.get("kind") == "image" and layer.get("fit", "contain") != "fill":
-                # The preview hugs the aspect-correct image, centered inside the configured rect.
-                ih, iw = image.shape[:2]
-                px += (pw - iw) / 2.0
-                py += (ph - ih) / 2.0
-                pw, ph = float(iw), float(ih)
-                preserve_aspect = True
-                aspect_ratio = iw / ih if ih else None
-            item = LayerItem(name, pixmap, (px, py, pw, ph), self._layer_dragged,
+            if layer.get("kind") == "image":
+                aspect_ratio = image_aspect
+                if layer.get("fit", "fill") == "contain":
+                    # Only the opt-in contain mode centers an aspect-locked image inside the rect.
+                    ih, iw = image.shape[:2]
+                    px += (pw - iw) / 2.0
+                    py += (ph - ih) / 2.0
+                    pw, ph = float(iw), float(ih)
+                    preserve_aspect = True
+            item = LayerItem(name, pixmap, (px, py, pw, ph), self,
                              preserve_aspect=preserve_aspect, aspect_ratio=aspect_ratio)
+            item.set_grips_visible(self.show_grips)
             item.setZValue(float(layer.get("z", 10)))
             self.scene.addItem(item)
             self.layer_items[name] = item
@@ -736,6 +1039,7 @@ class FastTrackWindow(QMainWindow):
             QMessageBox.critical(self, "Could not save config", str(exc))
 
     def reset_layout(self):
+        self._snapshot("Reset layout")
         try:
             self.config, self.config_path = load_config(self.config_path)
             ensure_assets(self.config, self.config_path)

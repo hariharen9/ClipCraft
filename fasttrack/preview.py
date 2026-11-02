@@ -61,7 +61,8 @@ def layer_preview_image(
     canvas_w: int,
     canvas_h: int,
     config_path: Path,
-) -> np.ndarray | None:
+) -> tuple[np.ndarray | None, float | None]:
+    """Return (preview image, native content aspect w/h); aspect is None for video layers."""
     rect = layer.get("rect", [0, 0, 0.1, 0.1])
     target_w = max(2, int(round(float(rect[2]) * canvas_w)))
     target_h = max(2, int(round(float(rect[3]) * canvas_h)))
@@ -69,27 +70,29 @@ def layer_preview_image(
     if kind == "video":
         crop = normalized_crop(frame, layer.get("crop", [0, 0, 1, 1]))
         if layer.get("fit", "cover") == "contain":
-            return fit_contain(crop, target_w, target_h)
-        return fit_cover(crop, target_w, target_h)
+            return fit_contain(crop, target_w, target_h), None
+        return fit_cover(crop, target_w, target_h), None
     if kind == "image":
         asset = resolve_asset(config_path, layer.get("asset", ""))
         if not asset.is_file():
-            return None
+            return None, None
         try:
             image = Image.open(asset).convert("RGBA")
             # Transparent padding must not count towards the image's placement or aspect.
             bbox = image.getchannel("A").getbbox()
             if bbox is not None and bbox != (0, 0, image.width, image.height):
                 image = image.crop(bbox)
-            if layer.get("fit", "contain") == "fill":
-                image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
-            else:
+            aspect = image.width / image.height if image.height else None
+            if layer.get("fit", "fill") == "contain":
                 fit_w, fit_h = contain_fit(image.width, image.height, target_w, target_h)
                 image = image.resize((fit_w, fit_h), Image.Resampling.LANCZOS)
-            return np.array(image)
+            else:
+                # Free transform: the picture fills its rectangle exactly, as arranged in the editor.
+                image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            return np.array(image), aspect
         except (OSError, ValueError):
-            return None
-    return None
+            return None, None
+    return None, None
 
 
 def to_qimage_array(image: np.ndarray):
