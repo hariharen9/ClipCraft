@@ -26,7 +26,8 @@ from .renderer import probe_video, run_render
 class LayerItem(QGraphicsPixmapItem):
     """A canvas layer with drag and bottom-right resize interaction."""
 
-    def __init__(self, name: str, pixmap: QPixmap, rect: tuple[float, float, float, float], on_change):
+    def __init__(self, name: str, pixmap: QPixmap, rect: tuple[float, float, float, float], on_change,
+                 preserve_aspect: bool = False, aspect_ratio: float | None = None):
         super().__init__(pixmap)
         self.name = name
         self.on_change = on_change
@@ -34,6 +35,8 @@ class LayerItem(QGraphicsPixmapItem):
         self._resizing = False
         self._last_scene_pos = None
         self._min_size = 12
+        self._preserve_aspect = preserve_aspect
+        self._aspect_ratio = aspect_ratio
         self.setPos(rect[0], rect[1])
         self.setZValue(10)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -50,7 +53,10 @@ class LayerItem(QGraphicsPixmapItem):
 
     def set_layer_size(self, width: float, height: float) -> None:
         width_i = max(self._min_size, int(round(width)))
-        height_i = max(self._min_size, int(round(height)))
+        if self._preserve_aspect and self._aspect_ratio:
+            height_i = max(2, int(round(width_i / self._aspect_ratio)))
+        else:
+            height_i = max(self._min_size, int(round(height)))
         self.setPixmap(self._source_pixmap.scaled(
             width_i, height_i, Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation
@@ -76,8 +82,13 @@ class LayerItem(QGraphicsPixmapItem):
             scene = self.scene()
             max_w = scene.sceneRect().width() - self.x() if scene else current.width() + delta.x()
             max_h = scene.sceneRect().height() - self.y() if scene else current.height() + delta.y()
-            self.set_layer_size(min(max_w, current.width() + delta.x()),
-                                min(max_h, current.height() + delta.y()))
+            new_w = min(max_w, current.width() + delta.x())
+            if self._preserve_aspect and self._aspect_ratio:
+                # Corner resize keeps the image's original aspect ratio.
+                new_w = max(self._min_size, min(new_w, max_h * self._aspect_ratio))
+                self.set_layer_size(new_w, new_w / self._aspect_ratio)
+            else:
+                self.set_layer_size(new_w, min(max_h, current.height() + delta.y()))
         else:
             scene = self.scene()
             if scene:
@@ -564,7 +575,12 @@ class FastTrackWindow(QMainWindow):
             crop[1] = min(crop[1], 1.0 - crop[3])
             layer["crop"] = crop
         self.refresh_canvas()
-        self.statusBar().showMessage(f"Updated {name} layer")
+        if layer.get("kind") == "image" and layer.get("fit", "contain") != "fill":
+            self.statusBar().showMessage(
+                f"Updated {name} layer — images keep their original aspect ratio inside the rectangle"
+            )
+        else:
+            self.statusBar().showMessage(f"Updated {name} layer")
 
     def reset_crop_to_default(self):
         name = self._active_layer_name()
@@ -620,8 +636,19 @@ class FastTrackWindow(QMainWindow):
                 continue
             pixmap = QPixmap.fromImage(to_qimage_array(image))
             x, y, w, h = layer.get("rect", [0, 0, 0.1, 0.1])
-            item = LayerItem(name, pixmap, (x * canvas_w, y * canvas_h, w * canvas_w, h * canvas_h), self._layer_dragged)
-            item.set_layer_size(w * canvas_w, h * canvas_h)
+            px, py, pw, ph = x * canvas_w, y * canvas_h, w * canvas_w, h * canvas_h
+            preserve_aspect = False
+            aspect_ratio = None
+            if layer.get("kind") == "image" and layer.get("fit", "contain") != "fill":
+                # The preview hugs the aspect-correct image, centered inside the configured rect.
+                ih, iw = image.shape[:2]
+                px += (pw - iw) / 2.0
+                py += (ph - ih) / 2.0
+                pw, ph = float(iw), float(ih)
+                preserve_aspect = True
+                aspect_ratio = iw / ih if ih else None
+            item = LayerItem(name, pixmap, (px, py, pw, ph), self._layer_dragged,
+                             preserve_aspect=preserve_aspect, aspect_ratio=aspect_ratio)
             item.setZValue(float(layer.get("z", 10)))
             self.scene.addItem(item)
             self.layer_items[name] = item

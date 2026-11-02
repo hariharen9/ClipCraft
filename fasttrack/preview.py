@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .config import resolve_asset
+from .config import contain_fit, resolve_asset
 
 
 def normalized_crop(frame: np.ndarray, crop: list[float]) -> np.ndarray:
@@ -77,7 +77,15 @@ def layer_preview_image(
             return None
         try:
             image = Image.open(asset).convert("RGBA")
-            image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            # Transparent padding must not count towards the image's placement or aspect.
+            bbox = image.getchannel("A").getbbox()
+            if bbox is not None and bbox != (0, 0, image.width, image.height):
+                image = image.crop(bbox)
+            if layer.get("fit", "contain") == "fill":
+                image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            else:
+                fit_w, fit_h = contain_fit(image.width, image.height, target_w, target_h)
+                image = image.resize((fit_w, fit_h), Image.Resampling.LANCZOS)
             return np.array(image)
         except (OSError, ValueError):
             return None

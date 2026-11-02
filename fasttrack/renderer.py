@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Any
 
-from .config import resolve_asset
+from .config import contain_fit, image_content_info, resolve_asset
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -150,13 +150,27 @@ def build_filter_complex(
         image_inputs.append(asset)
         x, y, w, h = _rect_pixels(layer.get("rect", [0, 0, 0.1, 0.1]), out_w, out_h)
         opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+        # Transparent padding is trimmed so the visible content defines shape and aspect.
+        native_w, native_h, bbox = image_content_info(asset)
+        source_w, source_h = native_w, native_h
+        trim = ""
+        if bbox is not None and tuple(bbox) != (0, 0, native_w, native_h):
+            source_w, source_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            trim = f"crop={source_w}:{source_h}:{bbox[0]}:{bbox[1]},"
+        if layer.get("fit", "contain") == "fill":
+            draw_w, draw_h, draw_x, draw_y = w, h, x, y
+        else:
+            # Keep the asset's original aspect ratio, centered inside the layer rectangle.
+            draw_w, draw_h = contain_fit(source_w, source_h, w, h)
+            draw_x = x + (w - draw_w) // 2
+            draw_y = y + (h - draw_h) // 2
         image_label = f"img_{name}"
         parts.append(
-            f"[{input_index}:v]format=rgba,scale={w}:{h},"
+            f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"
             f"colorchannelmixer=aa={opacity:.4f}[{image_label}]"
         )
         next_label = f"comp_img{image_number}"
-        parts.append(f"[{current}][{image_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
+        parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
         current = next_label
         input_index += 1
 

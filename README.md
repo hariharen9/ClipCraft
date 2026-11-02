@@ -11,7 +11,7 @@ The same source recording is used for four moving-picture layers:
 3. A separate top-right killfeed crop.
 4. A separate lower-left chat crop.
 
-Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its *output rectangle* and its *source crop* are both editable.
+Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its *output rectangle* and its *source crop* are both editable. Image layers are never stretched: they keep their original aspect ratio inside their rectangle.
 
 Default output: **1080 × 1920, 60 fps, MP4/H.264**, with the source audio retained. Rendering uses NVIDIA NVENC on a supported NVIDIA driver / FFmpeg build; `auto` falls back to CPU x264 if NVENC fails.
 
@@ -159,6 +159,21 @@ For video layers, `crop` is another normalized `[x, y, width, height]` rectangle
 ```
 
 If your recorded HUD position differs from the reference, adjust `crop` rather than moving the whole recording. Adjust `rect` to move or resize the rendered crop on the portrait canvas.
+
+### Image layers keep their original shape
+
+Image layers (`valorant_title`, `socials`, `channel_logo`, or any picture you import) are never stretched. FastTrack trims fully transparent borders first, then scales the visible content to the largest size that fits inside the layer `rect` while preserving the original aspect ratio, centered in that rectangle. Dragging the corner handle in the editor also keeps the aspect ratio locked, so pictures can only be resized proportionally.
+
+If you specifically want a picture stretched to fill its whole rectangle, set `"fit": "fill"` on that image layer:
+
+```json
+"valorant_title": {
+  "kind": "image",
+  "asset": "assets/valorant_title.png",
+  "fit": "fill",
+  "rect": [0.128, 0.052, 0.803, 0.065]
+}
+```
 
 `background.blur`, `background.brightness` and `background.saturation` control the blurred backdrop. The `canvas` section controls dimensions, FPS, encoder, quality and presets.
 

@@ -67,5 +67,28 @@ def resolve_asset(config_path: Path, asset_path: str | Path) -> Path:
     return path.resolve()
 
 
+def contain_fit(native_w: float, native_h: float, box_w: float, box_h: float) -> tuple[int, int]:
+    """Largest size that fits inside the box while keeping the native aspect ratio."""
+    if native_w <= 0 or native_h <= 0 or box_w <= 0 or box_h <= 0:
+        return max(2, int(round(box_w))), max(2, int(round(box_h)))
+    scale = min(box_w / native_w, box_h / native_h)
+    return max(2, int(round(native_w * scale))), max(2, int(round(native_h * scale)))
+
+
+def image_content_info(path: Path) -> tuple[int, int, tuple[int, int, int, int] | None]:
+    """Return (width, height, alpha bounding box) for an image.
+
+    The bounding box is None when every pixel is transparent. When it covers the
+    whole image there is no transparent padding to trim.
+    """
+    from PIL import Image  # Deferred so config stays importable without Pillow.
+
+    with Image.open(path) as image:
+        rgba = image.convert("RGBA")
+        size = rgba.size
+        bbox = rgba.getchannel("A").getbbox()
+    return int(size[0]), int(size[1]), bbox
+
+
 def clone_config(data: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(data)
