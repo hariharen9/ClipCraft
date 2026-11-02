@@ -1,4 +1,4 @@
-# FastTrack — Gaming Shorts Editor
+# FasTrack — Gaming Shorts Editor
 
 A small Windows-first editor for turning a gameplay recording into a 9:16 vertical short. The first profile is **Valorant**, based on the supplied BadPanda layout.
 
@@ -30,7 +30,7 @@ ffmpeg -hide_banner -encoders | findstr nvenc
 ffprobe -version
 ```
 
-You should see `h264_nvenc` in the encoder list for NVENC support. The actual NVIDIA driver/runtime is also checked when rendering. If it cannot initialize, use `--encoder cpu` or leave the default `auto` to let FastTrack retry with CPU encoding.
+You should see `h264_nvenc` in the encoder list for NVENC support. The actual NVIDIA driver/runtime is also checked when rendering. If it cannot initialize, use `--encoder cpu` or leave the default `auto` to let FasTrack retry with CPU encoding.
 
 ## 2. Install
 
@@ -62,7 +62,7 @@ python fasttrack.py "D:\Clips\valorant_match.mp4" -g valorant --gui
 
 Scrub the timeline to a moment you want, click **Set IN**, scrub to the end, then click **Set OUT**. You can also type precise timestamps in seconds. The editor preview updates as you scrub.
 
-FastTrack remembers the folder of the last recording you opened (stored in `fasttrack_state.json` beside the app) and starts the file browser there next time. Opening a clip from a different folder simply updates the memory.
+FasTrack remembers the folder of the last recording you opened (stored in `fasttrack_state.json` beside the app) and starts the file browser there next time. Opening a clip from a different folder simply updates the memory.
 
 ### Layout editing
 
@@ -130,7 +130,7 @@ Edit these values and restart the editor:
 }
 ```
 
-FastTrack regenerates the three starter PNGs (`assets/valorant_title.png`, `assets/socials.png`, `assets/channel_logo.png`) at launch. To use your own art, change the matching `asset` path under the corresponding layer in `config.json`, for example:
+FasTrack regenerates the three starter PNGs (`assets/valorant_title.png`, `assets/socials.png`, `assets/channel_logo.png`) at launch. To use your own art, change the matching `asset` path under the corresponding layer in `config.json`, for example:
 
 ```json
 "channel_logo": {
@@ -195,6 +195,6 @@ To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"
 
 **NVENC initialization error** — update the NVIDIA driver and use an FFmpeg build with NVENC. Set Encoder to `Auto` or choose `CPU / x264` in the GUI.
 
-**GUI fails during install** — install dependencies with the same Python interpreter used to start FastTrack: `python -m pip install -r requirements.txt`.
+**GUI fails during install** — install dependencies with the same Python interpreter used to start FasTrack: `python -m pip install -r requirements.txt`.
 
 **Preview shows black or cannot open a file** — try an H.264 MP4 recording. Some unusual codecs/containers can be rendered by FFmpeg but may not decode in the OpenCV preview backend.

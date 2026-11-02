@@ -13,5 +13,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo FastTrack installed. Use run_gui.bat or render.bat.
+echo FasTrack installed. Use run_gui.bat or render.bat.
 pause

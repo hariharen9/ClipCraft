@@ -39,7 +39,7 @@ def parse_time(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fasttrack",
-        description="FastTrack — turn gameplay recordings into vertical gaming Shorts.",
+        description="FasTrack — turn gameplay recordings into vertical gaming Shorts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("video", nargs="?", help="Input recording (MP4, MKV, MOV, AVI, WEBM)")
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         config, config_path = load_config(args.config)
         ensure_assets(config, config_path)
     except Exception as exc:
-        print(f"[FastTrack] Config error: {exc}", file=sys.stderr)
+        print(f"[FasTrack] Config error: {exc}", file=sys.stderr)
         return 2
 
     if args.gui or not args.render and (args.in_time is None or args.out_time is None):
@@ -79,12 +79,12 @@ def main(argv: list[str] | None = None) -> int:
             return int(launch_gui(args.video, game, args.config) or 0)
         except ImportError as exc:
             print(
-                "[FastTrack] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
+                "[FasTrack] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
                 f"Details: {exc}", file=sys.stderr
             )
             return 2
         except Exception as exc:
-            print(f"[FastTrack] Could not start GUI: {exc}", file=sys.stderr)
+            print(f"[FasTrack] Could not start GUI: {exc}", file=sys.stderr)
             return 2
 
     if not args.video:
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nClip duration: {duration:.3f}s | Source: {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
             return 0
 
-        print(f"FastTrack · Valorant · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
+        print(f"FasTrack · Valorant · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
         print(f"IN {args.in_time:.3f}s → OUT {args.out_time:.3f}s ({args.out_time - args.in_time:.3f}s)")
         print(f"Output: {output_path}")
 
@@ -126,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n\nDone: {rendered}")
         return 0
     except Exception as exc:
-        print(f"\n[FastTrack] Render failed: {exc}", file=sys.stderr)
+        print(f"\n[FasTrack] Render failed: {exc}", file=sys.stderr)
         return 1
 
 

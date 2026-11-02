@@ -299,10 +299,10 @@ class RenderWorker(QThread):
             self.finished_signal.emit(False, str(exc))
 
 
-class FastTrackWindow(QMainWindow):
+class FasTrackWindow(QMainWindow):
     def __init__(self, video_path: str | None, game: str = "valorant", config_path: str | Path | None = None):
         super().__init__()
-        self.setWindowTitle("FastTrack Video Editor — Gaming Shorts")
+        self.setWindowTitle("FasTrack Video Editor — Gaming Shorts")
         self.resize(1510, 940)
         self.setMinimumSize(1100, 720)
         self.config, self.config_path = load_config(config_path)
@@ -1133,7 +1133,7 @@ class FastTrackWindow(QMainWindow):
         if self.capture is not None:
             self.capture.release()
         if self.worker is not None and self.worker.isRunning():
-            QMessageBox.warning(self, "Render in progress", "Wait for the current render to finish before closing FastTrack.")
+            QMessageBox.warning(self, "Render in progress", "Wait for the current render to finish before closing FasTrack.")
             event.ignore()
             return
         event.accept()
@@ -1141,6 +1141,6 @@ class FastTrackWindow(QMainWindow):
 
 def launch_gui(video_path: str | None, game: str, config_path: str | Path | None = None):
     app = QApplication.instance() or QApplication([])
-    window = FastTrackWindow(video_path, game, config_path)
+    window = FasTrackWindow(video_path, game, config_path)
     window.show()
     return app.exec()

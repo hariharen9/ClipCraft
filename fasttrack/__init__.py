@@ -1,3 +1,3 @@
-"""FastTrack gaming shorts editor."""
+"""FasTrack gaming shorts editor."""
 
 __version__ = "0.1.0"
