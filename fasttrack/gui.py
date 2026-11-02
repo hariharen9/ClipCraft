@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from .assets import ensure_assets
-from .config import clone_config, load_config, save_config
+from .config import clone_config, load_config, load_state, save_config, save_state
 from .preview import layer_preview_image, render_background, to_qimage_array
 from .renderer import probe_video, run_render
 
@@ -156,6 +156,9 @@ class FastTrackWindow(QMainWindow):
         ensure_assets(self.config, self.config_path)
         self.original_config = clone_config(self.config)
         self.game = game
+        state = load_state()
+        remembered = str(state.get("source_dir", ""))
+        self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
         self.video_path: str | None = None
         self.video_info: dict[str, Any] | None = None
         self.capture: cv2.VideoCapture | None = None
@@ -404,7 +407,7 @@ class FastTrackWindow(QMainWindow):
 
     def browse_video(self):
         filename, _ = QFileDialog.getOpenFileName(
-            self, "Choose gameplay recording", str(Path.home()),
+            self, "Choose gameplay recording", self.source_dir,
             "Video files (*.mp4 *.mkv *.mov *.avi *.webm);;All files (*.*)"
         )
         if filename:
@@ -429,6 +432,7 @@ class FastTrackWindow(QMainWindow):
         self.video_path = str(path)
         self.video_info = info
         self.video_edit.setText(self.video_path)
+        self._remember_source_dir(path.parent)
         duration = float(info["duration"])
         self.in_spin.blockSignals(True)
         self.out_spin.blockSignals(True)
@@ -446,6 +450,16 @@ class FastTrackWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Loaded {path.name} · {info['width']}×{info['height']} · {info['fps']:.2f} fps · {duration:.2f}s"
         )
+
+    def _remember_source_dir(self, directory: Path) -> None:
+        """Persist the folder of the last opened recording for the next session."""
+        self.source_dir = str(directory)
+        try:
+            state = load_state()
+            state["source_dir"] = self.source_dir
+            save_state(state)
+        except OSError:
+            pass  # Remembering the folder must never block loading a video.
 
     def _position_changed(self, value: int):
         if not self.video_info:

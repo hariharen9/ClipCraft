@@ -5,3 +5,4 @@ exports/
 *.mp4
 *.mkv
 /assets/
+fasttrack_state.json

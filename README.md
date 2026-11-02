@@ -62,6 +62,8 @@ python fasttrack.py "D:\Clips\valorant_match.mp4" -g valorant --gui
 
 Scrub the timeline to a moment you want, click **Set IN**, scrub to the end, then click **Set OUT**. You can also type precise timestamps in seconds. The editor preview updates as you scrub.
 
+FastTrack remembers the folder of the last recording you opened (stored in `fasttrack_state.json` beside the app) and starts the file browser there next time. Opening a clip from a different folder simply updates the memory.
+
 ### Layout editing
 
 - Choose a layer in the right-hand **Layer editor**.

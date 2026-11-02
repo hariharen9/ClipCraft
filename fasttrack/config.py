@@ -7,6 +7,7 @@ from typing import Any
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = APP_DIR / "config.json"
+STATE_FILE = APP_DIR / "fasttrack_state.json"
 
 
 def load_config(path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
@@ -28,6 +29,27 @@ def save_config(data: dict[str, Any], path: str | Path) -> None:
         json.dump(data, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
     temp.replace(target)
+
+
+def load_state(path: str | Path | None = None) -> dict[str, Any]:
+    """Load small UI state (e.g. the last used source folder); missing or broken files read as empty."""
+    state_path = Path(path) if path else STATE_FILE
+    try:
+        with state_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_state(data: dict[str, Any], path: str | Path | None = None) -> None:
+    state_path = Path(path) if path else STATE_FILE
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    temp = state_path.with_suffix(state_path.suffix + ".tmp")
+    with temp.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    temp.replace(state_path)
 
 
 def validate_config(data: dict[str, Any]) -> None:
