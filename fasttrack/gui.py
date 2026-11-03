@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -45,8 +47,9 @@ class HandleItem(QGraphicsRectItem):
         "e": Qt.CursorShape.SizeHorCursor, "w": Qt.CursorShape.SizeHorCursor,
     }
 
-    def __init__(self, layer: "LayerItem", role: str):
-        super().__init__(QRectF(-HANDLE_SIZE / 2, -HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE))
+    def __init__(self, layer: "LayerItem", role: str, grip_size: float = HANDLE_SIZE):
+        super().__init__(QRectF(-grip_size / 2, -grip_size / 2, grip_size, grip_size))
+        self.grip_size = grip_size
         self.layer = layer
         self.role = role
         self._drag_start = None
@@ -103,7 +106,8 @@ class LayerItem(QGraphicsPixmapItem):
     HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
 
     def __init__(self, name: str, pixmap: QPixmap, rect: tuple[float, float, float, float],
-                 controller, preserve_aspect: bool = False, aspect_ratio: float | None = None):
+                 controller, preserve_aspect: bool = False, aspect_ratio: float | None = None,
+                 grip_size: float = HANDLE_SIZE):
         super().__init__(pixmap)
         self.name = name
         self.controller = controller
@@ -123,10 +127,15 @@ class LayerItem(QGraphicsPixmapItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setCursor(QCursor(Qt.CursorShape.SizeAllCursor))
         self.setZValue(10)
-        self._handles = {role: HandleItem(self, role) for role in self.HANDLES}
+        self._handles = {role: HandleItem(self, role, grip_size) for role in self.HANDLES}
         for handle in self._handles.values():
             handle.setParentItem(self)
         self.set_pos_size(*rect)
+
+    def set_frame_pixmap(self, pixmap: QPixmap) -> None:
+        """Playback: swap in the next decoded frame without touching geometry or grips."""
+        self._source_pixmap = pixmap
+        self.setPixmap(pixmap)
 
     def set_grips_visible(self, visible: bool) -> None:
         for handle in self._handles.values():
@@ -323,11 +332,21 @@ class FasTrackWindow(QMainWindow):
         self.current_frame: np.ndarray | None = None
         self.playhead = 0.0
         self.play_timer = QTimer(self)
-        self.play_timer.setInterval(33)
+        self.play_timer.setInterval(16)
         self.play_timer.timeout.connect(self._play_tick)
         self.pending_capture = False
         self.layer_items: dict[str, LayerItem] = {}
         self._bg_item = None
+        self._playing = False
+        self._play_speed = 1.0
+        self._play_direction = 1
+        self._play_clock: float | None = None
+        self._read_backlog = 0.0
+        self._frame_index = 0
+        self._scrubbing = False
+        self._reverse_buffer: list = []
+        self.preview_sharp = bool(state.get("preview_sharp", True))
+        self.preview_scale = 1.5 if self.preview_sharp else 1.0
         self.worker: RenderWorker | None = None
         self._undo_stack: list[tuple[str, dict[str, Any]]] = []
         self._redo_stack: list[tuple[str, dict[str, Any]]] = []
@@ -337,6 +356,8 @@ class FasTrackWindow(QMainWindow):
         undo_shortcut.activated.connect(self.undo)
         redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self.redo)
+        space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        space_shortcut.activated.connect(self.toggle_play)
         if video_path:
             self.load_video(video_path)
         else:
@@ -413,19 +434,40 @@ class FasTrackWindow(QMainWindow):
         self.position_slider = QSlider(Qt.Orientation.Horizontal)
         self.position_slider.setRange(0, 10000)
         self.position_slider.valueChanged.connect(self._position_changed)
-        self.position_slider.sliderReleased.connect(self._capture_at_playhead)
+        self.position_slider.sliderPressed.connect(self._start_scrub)
+        self.position_slider.sliderReleased.connect(self._finish_scrub)
         trim_layout.addWidget(self.position_slider)
         play_row = QHBoxLayout()
         self.play_button = QPushButton("▶ Play")
         self.play_button.clicked.connect(self.toggle_play)
         play_row.addWidget(self.play_button)
+        self.step_back_button = QPushButton("◀ Frame")
+        self.step_back_button.setToolTip("Back 1 frame (Left arrow; Shift = 1 second)")
+        self.step_back_button.clicked.connect(self._step_back)
+        play_row.addWidget(self.step_back_button)
+        self.step_fwd_button = QPushButton("Frame ▶")
+        self.step_fwd_button.setToolTip("Forward 1 frame (Right arrow; Shift = 1 second)")
+        self.step_fwd_button.clicked.connect(self._step_forward)
+        play_row.addWidget(self.step_fwd_button)
+        trim_layout.addLayout(play_row)
+        io_row = QHBoxLayout()
         self.set_in_button = QPushButton("Set IN ◀")
         self.set_in_button.clicked.connect(self.set_in_from_playhead)
-        play_row.addWidget(self.set_in_button)
+        io_row.addWidget(self.set_in_button)
         self.set_out_button = QPushButton("Set OUT ▶")
         self.set_out_button.clicked.connect(self.set_out_from_playhead)
-        play_row.addWidget(self.set_out_button)
-        trim_layout.addLayout(play_row)
+        io_row.addWidget(self.set_out_button)
+        trim_layout.addLayout(io_row)
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(QLabel("Speed"))
+        self.speed_combo = QComboBox()
+        for speed_label, speed_value in (("0.25×", 0.25), ("0.5×", 0.5), ("1×", 1.0), ("2×", 2.0), ("4×", 4.0)):
+            self.speed_combo.addItem(speed_label, speed_value)
+        self.speed_combo.setCurrentIndex(2)
+        self.speed_combo.currentIndexChanged.connect(self._speed_changed)
+        speed_row.addWidget(self.speed_combo)
+        speed_row.addStretch(1)
+        trim_layout.addLayout(speed_row)
         trim_form = QFormLayout()
         self.in_spin = QDoubleSpinBox()
         self.out_spin = QDoubleSpinBox()
@@ -533,9 +575,15 @@ class FasTrackWindow(QMainWindow):
         self.grips_check.setToolTip("Show or hide the resize grips (resizing is still available via the position/size fields)")
         self.grips_check.stateChanged.connect(self._toggle_grips)
         header.addWidget(self.grips_check)
+        self.sharp_check = QCheckBox("Sharp preview")
+        self.sharp_check.setChecked(self.preview_sharp)
+        self.sharp_check.setToolTip("Render the preview at 540×960 instead of 360×640 (a bit heavier during playback)")
+        self.sharp_check.stateChanged.connect(self._toggle_sharp)
+        header.addWidget(self.sharp_check)
         layout.addLayout(header)
         self.scene = QGraphicsScene(self)
-        self.scene.setSceneRect(0, 0, 360, 640)
+        preview_w, preview_h = self._preview_size()
+        self.scene.setSceneRect(0, 0, preview_w, preview_h)
         self.preview_view = QGraphicsView(self.scene)
         self.preview_view.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self.preview_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -685,7 +733,15 @@ class FasTrackWindow(QMainWindow):
         self.position_slider.setValue(0)
         output = path.parent / "exports" / f"{path.stem}_{self.game}_short.mp4"
         self.output_edit.setText(str(output))
-        self._capture_at_playhead()
+        if self._playing:
+            self._stop_playback()
+        self._frame_index = 0
+        self._scrubbing = False
+        self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ok, first_frame = self.capture.read()
+        if ok:
+            self.current_frame = first_frame
+        self.refresh_canvas()
         self.statusBar().showMessage(
             f"Loaded {path.name} · {info['width']}×{info['height']} · {info['fps']:.2f} fps · {duration:.2f}s"
         )
@@ -705,43 +761,258 @@ class FasTrackWindow(QMainWindow):
             return
         duration = self.video_info["duration"]
         self.playhead = duration * value / 10000.0
-        self.frame_label.setText(f"{self._format_time(self.playhead)} / {self._format_time(duration)}")
+        self._update_time_label()
 
-    def _capture_at_playhead(self):
-        if self.capture is None:
-            return
-        self.capture.set(cv2.CAP_PROP_POS_MSEC, self.playhead * 1000.0)
+    def _update_time_label(self):
+        duration = self.video_info["duration"]
+        frame = int(round(self.playhead * self._effective_fps()))
+        self.frame_label.setText(
+            f"{self._format_time(self.playhead)} / {self._format_time(duration)} · frame {frame}"
+        )
+
+    # -- playback engine ---------------------------------------------------
+
+    def _effective_fps(self) -> float:
+        fps = float((self.video_info or {}).get("fps", 0.0) or 0.0)
+        if fps <= 0.0:
+            return 30.0
+        return max(1.0, min(240.0, fps))
+
+    def _preview_size(self) -> tuple[int, int]:
+        return int(360 * self.preview_scale), int(640 * self.preview_scale)
+
+    def _seek_to_index(self, index: int) -> bool:
+        """Random-access seek (scrub / stepping / loop) — used sparingly, never per playback tick."""
+        if self.capture is None or not self.video_info:
+            return False
+        fps = self._effective_fps()
+        total = max(1, int(round(float(self.video_info["duration"]) * fps)))
+        index = max(0, min(total - 1, index))
+        if index == self._frame_index and self.current_frame is not None:
+            return False
+        self.capture.set(cv2.CAP_PROP_POS_FRAMES, index)
         ok, frame = self.capture.read()
-        if ok:
-            self.current_frame = frame
-            self.refresh_canvas()
+        if not ok:
+            return False
+        self._frame_index = index
+        self.current_frame = frame
+        self.playhead = index / fps
+        return True
 
-    def _play_tick(self):
+    def _update_frame_layers(self) -> None:
+        """Per-frame update: only the blurred backdrop and the video windows change.
+
+        Image layers and grips are static scene items — rebuilding them per frame
+        (the old behaviour) was what made playback crawl.
+        """
+        if self.current_frame is None:
+            return
+        canvas_w, canvas_h = self._preview_size()
+        if self._bg_item is not None:
+            background = render_background(self.current_frame, canvas_w, canvas_h, self.config)
+            self._bg_item.setPixmap(QPixmap.fromImage(to_qimage_array(background)))
+        for name, layer in self.config["layers"].items():
+            if layer.get("kind") != "video" or not layer.get("visible", True):
+                continue
+            item = self.layer_items.get(name)
+            if item is None:
+                continue
+            image, _ = layer_preview_image(name, layer, self.current_frame, canvas_w, canvas_h, self.config_path)
+            if image is not None:
+                item.set_frame_pixmap(QPixmap.fromImage(to_qimage_array(image)))
+
+    def _sync_playhead_ui(self) -> None:
         if not self.video_info:
             return
-        step = 1.0 / max(1.0, min(60.0, self.video_info.get("fps", 30.0) or 30.0))
-        self.playhead += step
-        if self.playhead >= self.out_spin.value():
-            self.playhead = self.in_spin.value()
         self.position_slider.blockSignals(True)
         self.position_slider.setValue(int(self.playhead / max(self.video_info["duration"], 0.001) * 10000))
         self.position_slider.blockSignals(False)
-        self._position_changed(self.position_slider.value())
-        self._capture_at_playhead()
+        self._update_time_label()
 
-    def toggle_play(self):
-        if self.play_timer.isActive():
-            self.play_timer.stop()
-            self.play_button.setText("▶ Play")
+    def _start_playback(self, direction: int = 1, reset_speed: bool = False) -> None:
+        if self.capture is None or not self.video_info:
+            return
+        self._playing = True
+        self._play_direction = 1 if direction >= 0 else -1
+        if reset_speed:
+            self._play_speed = 1.0
+        self._play_clock = time.monotonic()
+        self._read_backlog = 0.0
+        self._reverse_buffer.clear()
+        self.play_timer.start()
+        self.play_button.setText("Ⅱ Pause" if self._play_direction > 0 else "◀ Rewind")
+
+    def _stop_playback(self) -> None:
+        self._playing = False
+        self._reverse_buffer.clear()  # release decoded frames promptly
+        self.play_timer.stop()
+        self.play_button.setText("▶ Play")
+
+    def toggle_play(self) -> None:
+        if self._playing:
+            self._stop_playback()
         else:
-            self.play_button.setText("Ⅱ Pause")
-            self.play_timer.start()
+            self._start_playback()
+
+    def _play_tick(self):
+        if not self._playing or self.capture is None or not self.video_info:
+            self._stop_playback()
+            return
+        if self._scrubbing:
+            self._play_clock = time.monotonic()  # don't accumulate time while the slider is held
+            return
+        if self._play_direction < 0:
+            self._reverse_tick()
+            return
+        now = time.monotonic()
+        if self._play_clock is None:
+            self._play_clock = now
+        # Real-time pacing: elapsed wall time × speed decides how many frames to read.
+        self._read_backlog += (now - self._play_clock) * self._play_speed * self._effective_fps()
+        self._play_clock = now
+        count = min(int(self._read_backlog), 8)  # a burst must never freeze the UI
+        self._read_backlog -= count
+        fps = self._effective_fps()
+        in_frame = int(round(self.in_spin.value() * fps))
+        updated = False
+        for _ in range(count):
+            if self.playhead >= self.out_spin.value() - 1e-9:
+                updated |= self._seek_to_index(in_frame)  # loop back to IN
+                continue
+            ok, frame = self.capture.read()
+            if not ok:
+                updated |= self._seek_to_index(in_frame)  # end of stream → loop
+                continue
+            self._frame_index += 1
+            self.current_frame = frame
+            self.playhead = self._frame_index / fps
+            updated = True
+        if updated:
+            self._sync_playhead_ui()
+            self._update_frame_layers()
+
+    def _reverse_tick(self):
+        """Shuttle backwards: display frames from a small decoded buffer, refilled by one seek per batch."""
+        now = time.monotonic()
+        if self._play_clock is None:
+            self._play_clock = now
+        self._read_backlog += (now - self._play_clock) * self._play_speed * self._effective_fps()
+        self._play_clock = now
+        fps = self._effective_fps()
+        updated = False
+        while self._read_backlog >= 1.0:
+            if not self._reverse_buffer:
+                if self._frame_index <= 0 or self.playhead <= self.in_spin.value() + 1e-9:
+                    self._stop_playback()  # rewound to the IN point
+                    break
+                self._load_reverse_batch()
+                if not self._reverse_buffer:
+                    self._stop_playback()
+                    break
+            self.current_frame = self._reverse_buffer.pop()
+            self._frame_index -= 1
+            self.playhead = self._frame_index / fps
+            self._read_backlog -= 1.0
+            updated = True
+        if updated:
+            self._sync_playhead_ui()
+            self._update_frame_layers()
+
+    def _load_reverse_batch(self) -> None:
+        """Decode the frames just before the playhead into _reverse_buffer (newest last)."""
+        fps = self._effective_fps()
+        frame_bytes = self.current_frame.nbytes if self.current_frame is not None else 6_200_000
+        # ~0.25 s of footage per seek, capped by a ~96 MB working set for the batch.
+        batch = int(min(max(round(self._play_speed * fps * 0.25), 4),
+                        max(2, int(96_000_000 / max(frame_bytes, 1)))))
+        anchor = max(0, self._frame_index - batch)
+        self.capture.set(cv2.CAP_PROP_POS_FRAMES, anchor)
+        count = self._frame_index - anchor
+        self._reverse_buffer.clear()
+        for _ in range(count):
+            ok, frame = self.capture.read()
+            if not ok:
+                break
+            self._reverse_buffer.append(frame)
+
+    def _shuttle_forward(self) -> None:
+        if self._playing and self._play_direction > 0:
+            self._play_speed = min(self._play_speed * 2.0, 4.0)
+            self._play_clock = time.monotonic()
+        else:
+            self._start_playback(direction=1, reset_speed=True)
+        self._sync_speed_combo()
+
+    def _shuttle_reverse(self) -> None:
+        if self.current_frame is None:
+            return
+        if self._playing and self._play_direction < 0:
+            self._play_speed = min(self._play_speed * 2.0, 4.0)
+            self._play_clock = time.monotonic()
+        else:
+            if self.playhead <= self.in_spin.value() + 1e-9:
+                self.statusBar().showMessage("Already at the IN point — nothing to rewind")
+                return
+            self._start_playback(direction=-1, reset_speed=True)
+        self._sync_speed_combo()
+
+    def _sync_speed_combo(self) -> None:
+        index = self.speed_combo.findData(self._play_speed)
+        if index >= 0:
+            self.speed_combo.blockSignals(True)
+            self.speed_combo.setCurrentIndex(index)
+            self.speed_combo.blockSignals(False)
+
+    def _step_back(self) -> None:
+        second = bool(QApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self.step_frames(-int(round(self._effective_fps())) if second else -1)
+
+    def _step_forward(self) -> None:
+        second = bool(QApplication.queryKeyboardModifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self.step_frames(int(round(self._effective_fps())) if second else 1)
+
+    def step_frames(self, delta: int) -> None:
+        """Move by whole frames; stepping pauses playback (standard editor behaviour)."""
+        if self.capture is None or not self.video_info:
+            return
+        if self._playing:
+            self._stop_playback()
+        if self._seek_to_index(self._frame_index + delta):
+            self._sync_playhead_ui()
+            self._update_frame_layers()
+
+    def _start_scrub(self) -> None:
+        self._scrubbing = True
+
+    def _finish_scrub(self) -> None:
+        self._scrubbing = False
+        self._play_clock = time.monotonic()
+        self._read_backlog = 0.0
+        if self._seek_to_index(int(round(self.playhead * self._effective_fps()))):
+            self._sync_playhead_ui()
+            self._update_frame_layers()
+
+    def _speed_changed(self, index: int) -> None:
+        self._play_speed = float(self.speed_combo.itemData(index) or 1.0)
+
+    def _toggle_sharp(self, state: int) -> None:
+        self.preview_sharp = state == int(Qt.CheckState.Checked.value)
+        self.preview_scale = 1.5 if self.preview_sharp else 1.0
+        try:
+            app_state = load_state()
+            app_state["preview_sharp"] = self.preview_sharp
+            save_state(app_state)
+        except OSError:
+            pass
+        self.refresh_canvas()
 
     def set_in_from_playhead(self):
         self.in_spin.setValue(min(self.playhead, max(0.0, self.out_spin.value() - 0.05)))
+        self.statusBar().showMessage(f"IN set to {self._format_time(self.in_spin.value())}")
 
     def set_out_from_playhead(self):
         self.out_spin.setValue(max(self.playhead, self.in_spin.value() + 0.05))
+        self.statusBar().showMessage(f"OUT set to {self._format_time(self.out_spin.value())}")
 
     def _validate_trim(self):
         if self.out_spin.value() <= self.in_spin.value():
@@ -985,7 +1256,8 @@ class FasTrackWindow(QMainWindow):
 
     def layer_committed(self, name: str, item: LayerItem, action: str):
         ix, iy, iw, ih = item.geometry_tuple()
-        rect = [ix / 360.0, iy / 640.0, iw / 360.0, ih / 640.0]
+        preview_w, preview_h = self._preview_size()
+        rect = [ix / preview_w, iy / preview_h, iw / preview_w, ih / preview_h]
         self.config["layers"][name]["rect"] = rect
         if self._active_layer_name() == name:
             for key, value in zip(("x", "y", "w", "h"), rect):
@@ -1044,7 +1316,8 @@ class FasTrackWindow(QMainWindow):
             value_label.setText(f"{value:.{decimals}f}")
         if self._bg_item is not None and self.current_frame is not None:
             # Only the backdrop changes — layer items keep their state.
-            background_image = render_background(self.current_frame, 360, 640, self.config)
+            preview_w, preview_h = self._preview_size()
+            background_image = render_background(self.current_frame, preview_w, preview_h, self.config)
             self._bg_item.setPixmap(QPixmap.fromImage(to_qimage_array(background_image)))
 
     def _bg_interaction_started(self):
@@ -1070,10 +1343,11 @@ class FasTrackWindow(QMainWindow):
     def refresh_canvas(self):
         if self.current_frame is None:
             return
+        canvas_w, canvas_h = self._preview_size()
+        self.scene.setSceneRect(0, 0, canvas_w, canvas_h)
         self._bg_item = None
         self.scene.clear()
         self.layer_items.clear()
-        canvas_w, canvas_h = 360, 640
         background = render_background(self.current_frame, canvas_w, canvas_h, self.config)
         bg_pixmap = QPixmap.fromImage(to_qimage_array(background))
         bg_item = QGraphicsPixmapItem(bg_pixmap)
@@ -1104,7 +1378,8 @@ class FasTrackWindow(QMainWindow):
                     pw, ph = float(iw), float(ih)
                     preserve_aspect = True
             item = LayerItem(name, pixmap, (px, py, pw, ph), self,
-                             preserve_aspect=preserve_aspect, aspect_ratio=aspect_ratio)
+                             preserve_aspect=preserve_aspect, aspect_ratio=aspect_ratio,
+                             grip_size=HANDLE_SIZE * self.preview_scale)
             item.set_grips_visible(self.show_grips)
             item.setZValue(float(layer.get("z", 10)))
             self.scene.addItem(item)
@@ -1167,10 +1442,44 @@ class FasTrackWindow(QMainWindow):
             self.progress.setValue(100)
             self.render_status.setText("Render complete")
             self.statusBar().showMessage(f"Saved: {message}")
-            QMessageBox.information(self, "Render complete", f"Your short is ready:\n{message}")
+            action = self._render_complete_dialog(Path(message))
+            if action == "open":
+                self._open_output_folder(Path(message))
+            elif action == "play":
+                self._play_output(Path(message))
         else:
             self.render_status.setText("Render failed")
             QMessageBox.critical(self, "Render failed", message)
+
+    def _render_complete_dialog(self, output_path: Path) -> str:
+        """Show the completion dialog; returns "open", "play" or "close"."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Render complete")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(f"Your short is ready: <b>{output_path.name}</b>")
+        box.setInformativeText(str(output_path))
+        open_button = box.addButton("Open folder", QMessageBox.ButtonRole.ActionRole)
+        play_button = box.addButton("Play video", QMessageBox.ButtonRole.ActionRole)
+        close_button = box.addButton("Close", QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(close_button)
+        box.exec()
+        if box.clickedButton() is open_button:
+            return "open"
+        if box.clickedButton() is play_button:
+            return "play"
+        return "close"
+
+    def _open_output_folder(self, output_path: Path) -> None:
+        try:
+            subprocess.Popen(["explorer", "/select,", str(output_path)])
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not open folder", str(exc))
+
+    def _play_output(self, output_path: Path) -> None:
+        try:
+            os.startfile(str(output_path))  # type: ignore[attr-defined]  # Windows
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not play the video", str(exc))
 
     def save_layout(self):
         self._sync_render_config()
@@ -1204,6 +1513,36 @@ class FasTrackWindow(QMainWindow):
         if hours:
             return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
         return f"{minutes:02d}:{secs:02d}.{millis:03d}"
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        text_input = isinstance(self.focusWidget(), (QComboBox, QLineEdit, QDoubleSpinBox, QSlider, QSpinBox))
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            if text_input:
+                super().keyPressEvent(event)  # let number fields and sliders keep their arrows
+                return
+            direction = -1 if key == Qt.Key.Key_Left else 1
+            step = int(round(self._effective_fps())) if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else 1
+            self.step_frames(direction * step)
+            event.accept()
+            return
+        if key in (Qt.Key.Key_I, Qt.Key.Key_O, Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L):
+            if text_input:
+                super().keyPressEvent(event)  # typing in a field must keep working
+                return
+            if key == Qt.Key.Key_I:
+                self.set_in_from_playhead()
+            elif key == Qt.Key.Key_O:
+                self.set_out_from_playhead()
+            elif key == Qt.Key.Key_J:
+                self._shuttle_reverse()
+            elif key == Qt.Key.Key_K:
+                self._stop_playback()
+            else:
+                self._shuttle_forward()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.play_timer.stop()

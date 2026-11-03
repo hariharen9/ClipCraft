@@ -62,7 +62,11 @@ Choose a recording with **Browse**. To open the editor with a clip already loade
 python fasttrack.py "D:\Clips\valorant_match.mp4" -g valorant --gui
 ```
 
-Scrub the timeline to a moment you want, click **Set IN**, scrub to the end, then click **Set OUT**. You can also type precise timestamps in seconds. The editor preview updates as you scrub.
+Scrub the timeline to a moment you want, click **Set IN**, scrub to the end, then click **Set OUT**. You can also type precise timestamps in seconds. The editor preview updates as you scrub, and the readout shows the exact frame number.
+
+**Playback**: Play runs at real speed (sequential decoding — no seeking per frame), with a **Speed** selector from 0.25× to 4×. **◀ Frame / Frame ▶** step one frame at a time (Left/Right arrow keys too; hold **Shift** for a full second — stepping pauses playback), and **Space** toggles play/pause. **I** / **O** set the IN/OUT points from the playhead, and **J** / **K** / **L** shuttle: `L` plays forward (press again to double speed, up to 4×), `J` rewinds the same way, `K` pauses. The preview canvas is 360×640; enable **Sharp preview** above the canvas to render it at 540×960 (remembered between sessions).
+
+When a render finishes, the completion dialog shows the output filename and path and offers **Open folder** (opens Explorer with the file selected) and **Play video** (your default player).
 
 FasTrack remembers the folder of the last recording you opened (stored in `fasttrack_state.json` beside the app) and starts the file browser there next time. Opening a clip from a different folder simply updates the memory.
 

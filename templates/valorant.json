@@ -11,9 +11,9 @@
     "x264_preset": "medium"
   },
   "background": {
-    "blur": 22,
-    "brightness": -0.08,
-    "saturation": 0.82
+    "blur": 2.0,
+    "brightness": -0.07,
+    "saturation": 1.19
   },
   "branding": {
     "youtube_handle": "@thisisbadpanda",
