@@ -9,7 +9,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSizeF, QRectF
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSizeF, QRectF, QEvent
 from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
@@ -356,8 +356,9 @@ class FasTrackWindow(QMainWindow):
         undo_shortcut.activated.connect(self.undo)
         redo_shortcut = QShortcut(QKeySequence.StandardKey.Redo, self)
         redo_shortcut.activated.connect(self.redo)
-        space_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
-        space_shortcut.activated.connect(self.toggle_play)
+        qapp = QApplication.instance()
+        if qapp:
+            qapp.installEventFilter(self)
         if video_path:
             self.load_video(video_path)
         else:
@@ -388,6 +389,8 @@ class FasTrackWindow(QMainWindow):
         file_row = QHBoxLayout()
         file_row.addWidget(QLabel("Footage"))
         self.video_edit = QLineEdit()
+        self.video_edit.setReadOnly(True)
+        self.video_edit.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.video_edit.setPlaceholderText("Choose a Valorant recording…")
         file_row.addWidget(self.video_edit, 1)
         self.browse_button = QPushButton("Browse…")
@@ -1514,37 +1517,70 @@ class FasTrackWindow(QMainWindow):
             return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
         return f"{minutes:02d}:{secs:02d}.{millis:03d}"
 
-    def keyPressEvent(self, event):
-        key = event.key()
-        text_input = isinstance(self.focusWidget(), (QComboBox, QLineEdit, QDoubleSpinBox, QSlider, QSpinBox))
-        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-            if text_input:
-                super().keyPressEvent(event)  # let number fields and sliders keep their arrows
-                return
-            direction = -1 if key == Qt.Key.Key_Left else 1
-            step = int(round(self._effective_fps())) if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else 1
-            self.step_frames(direction * step)
-            event.accept()
-            return
-        if key in (Qt.Key.Key_I, Qt.Key.Key_O, Qt.Key.Key_J, Qt.Key.Key_K, Qt.Key.Key_L):
-            if text_input:
-                super().keyPressEvent(event)  # typing in a field must keep working
-                return
-            if key == Qt.Key.Key_I:
-                self.set_in_from_playhead()
-            elif key == Qt.Key.Key_O:
-                self.set_out_from_playhead()
-            elif key == Qt.Key.Key_J:
-                self._shuttle_reverse()
-            elif key == Qt.Key.Key_K:
-                self._stop_playback()
-            else:
-                self._shuttle_forward()
-            event.accept()
-            return
-        super().keyPressEvent(event)
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress:
+            if self.isActiveWindow() and (watched is self or self.isAncestorOf(watched)):
+                key = event.key()
+                modifiers = event.modifiers()
+                shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+
+                # 1. Output file edit: user is typing a filename
+                if watched is getattr(self, "output_edit", None):
+                    return super().eventFilter(watched, event)
+
+                # 2. Spin boxes: Left/Right moves cursor in number text; Up/Down steps number
+                is_spin = isinstance(watched, (QSpinBox, QDoubleSpinBox)) or isinstance(
+                    getattr(watched, "parent", lambda: None)(), (QSpinBox, QDoubleSpinBox)
+                )
+                if is_spin:
+                    if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+                        return super().eventFilter(watched, event)
+
+                # 3. Combo boxes: Left/Right/Up/Down navigates options
+                is_combo = isinstance(watched, QComboBox) or isinstance(
+                    getattr(watched, "parent", lambda: None)(), QComboBox
+                )
+                if is_combo:
+                    if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+                        return super().eventFilter(watched, event)
+
+                # 4. Background look sliders: Left/Right nudges slider unless Shift is held
+                bg_slider_widgets = [s for s, _, _, _ in getattr(self, "bg_sliders", {}).values()]
+                if watched in bg_slider_widgets:
+                    if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not shift:
+                        return super().eventFilter(watched, event)
+
+                # --- Video editor hotkeys ---
+                if key == Qt.Key.Key_Space:
+                    self.toggle_play()
+                    return True
+                if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+                    direction = -1 if key == Qt.Key.Key_Left else 1
+                    step = int(round(self._effective_fps())) if shift else 1
+                    self.step_frames(direction * step)
+                    return True
+                if key == Qt.Key.Key_I:
+                    self.set_in_from_playhead()
+                    return True
+                if key == Qt.Key.Key_O:
+                    self.set_out_from_playhead()
+                    return True
+                if key == Qt.Key.Key_J:
+                    self._shuttle_reverse()
+                    return True
+                if key == Qt.Key.Key_K:
+                    self._stop_playback()
+                    return True
+                if key == Qt.Key.Key_L:
+                    self._shuttle_forward()
+                    return True
+
+        return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
+        qapp = QApplication.instance()
+        if qapp:
+            qapp.removeEventFilter(self)
         self.play_timer.stop()
         if self.capture is not None:
             self.capture.release()
