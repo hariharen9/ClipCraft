@@ -9,14 +9,14 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSizeF, QRectF, QEvent
-from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QSizeF, QRectF, QEvent
+from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QProgressBar, QScrollArea, QSlider, QSpinBox, QSplitter, QStatusBar,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QListWidget, QListWidgetItem, QAbstractItemView,
 )
 
 from .assets import ensure_assets
@@ -312,6 +312,248 @@ class RenderWorker(QThread):
             self.finished_signal.emit(False, str(exc))
 
 
+
+def _make_eye_icon(visible: bool, size: int = 16) -> QIcon:
+    """Generate a clean vector eye icon (no cheap emojis)."""
+    pm = QPixmap(size, size)
+    pm.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    color = QColor(220, 222, 230) if visible else QColor(110, 112, 122)
+    p.setPen(QPen(color, 1.3))
+
+    path = QPainterPath()
+    path.moveTo(2.0, size / 2.0)
+    path.quadTo(size / 2.0, 3.0, size - 2.0, size / 2.0)
+    path.quadTo(size / 2.0, size - 3.0, 2.0, size / 2.0)
+    p.drawPath(path)
+
+    if visible:
+        p.setBrush(color)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(size / 2.0 - 2.2, size / 2.0 - 2.2, 4.4, 4.4))
+    else:
+        p.setPen(QPen(QColor(230, 80, 80), 1.6))
+        p.drawLine(3, size - 3, size - 3, 3)
+
+    p.end()
+    return QIcon(pm)
+
+
+class LayerStackWidget(QWidget):
+    """Visual list displaying layers ordered from top (front) to bottom (back), with eye toggles."""
+
+    layer_selected = Signal(str)
+    visibility_toggled = Signal(str, bool)
+    reordered = Signal(list)  # list of layer names in top-to-bottom order
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.list_widget.setMaximumHeight(140)
+        self.list_widget.setStyleSheet(
+            "QListWidget { background-color: #18181c; border: 1px solid #323238; border-radius: 4px; }"
+            "QListWidget::item { padding: 1px 4px; border-bottom: 1px solid #232328; }"
+            "QListWidget::item:selected { background-color: #2b3d58; border-radius: 3px; }"
+        )
+        self.list_widget.itemSelectionChanged.connect(self._on_item_selection_changed)
+        self.list_widget.model().rowsMoved.connect(self._on_rows_moved)
+        layout.addWidget(self.list_widget)
+
+        # Move Up / Down helper buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
+        self.up_button = QPushButton("▲ Bring Forward")
+        self.up_button.setFixedHeight(24)
+        self.up_button.setStyleSheet("font-size: 11px;")
+        self.up_button.setToolTip("Move layer up in stack (closer to front)")
+        self.up_button.clicked.connect(self.move_selected_up)
+        btn_row.addWidget(self.up_button)
+
+        self.down_button = QPushButton("▼ Send Backward")
+        self.down_button.setFixedHeight(24)
+        self.down_button.setStyleSheet("font-size: 11px;")
+        self.down_button.setToolTip("Move layer down in stack (closer to back)")
+        self.down_button.clicked.connect(self.move_selected_down)
+        btn_row.addWidget(self.down_button)
+        layout.addLayout(btn_row)
+
+        self._updating = False
+        self._layers_cache: dict[str, Any] = {}
+
+    def _create_item_widget(self, name: str, layer: dict[str, Any]) -> QWidget:
+        widget = QWidget()
+        w_layout = QHBoxLayout(widget)
+        w_layout.setContentsMargins(2, 0, 4, 0)
+        w_layout.setSpacing(6)
+
+        visible = bool(layer.get("visible", True))
+        eye_btn = QPushButton()
+        eye_btn.setIcon(_make_eye_icon(visible))
+        eye_btn.setIconSize(QSize(16, 16))
+        eye_btn.setFixedSize(22, 22)
+        eye_btn.setToolTip("Hide layer" if visible else "Show layer")
+        eye_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; }"
+            "QPushButton:hover { background-color: #353540; border-radius: 3px; }"
+        )
+        eye_btn.clicked.connect(lambda checked=False, n=name: self._toggle_eye(n))
+        w_layout.addWidget(eye_btn)
+
+        # Clean text-based type indicator
+        kind = layer.get("kind", "video")
+        kind_lbl = QLabel("[VID]" if kind == "video" else "[IMG]")
+        kind_lbl.setStyleSheet("color: #78a0c8; font-size: 10px; font-weight: bold;")
+        kind_lbl.setFixedWidth(30)
+        w_layout.addWidget(kind_lbl)
+
+        # Name label
+        title = name.replace("_", " ").title()
+        name_lbl = QLabel(title)
+        name_lbl.setStyleSheet("font-weight: 500; font-size: 12px; color: #eee;")
+        w_layout.addWidget(name_lbl, 1)
+
+        return widget
+
+    def populate(self, layers: dict[str, Any], active_name: str | None = None):
+        """Populate list from layers config. Top in list = highest Z-order (front)."""
+        self._layers_cache = layers
+        self._updating = True
+        self.list_widget.clear()
+
+        sorted_layers = sorted(
+            [(k, v) for k, v in layers.items() if k != "background"],
+            key=lambda pair: pair[1].get("z", 0),
+            reverse=True
+        )
+        active_row = 0
+        for row, (name, layer) in enumerate(sorted_layers):
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setSizeHint(QSize(0, 26))
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, self._create_item_widget(name, layer))
+
+            if active_name and name == active_name:
+                active_row = row
+
+        self._updating = False
+        if self.list_widget.count() > 0:
+            self.list_widget.setCurrentRow(active_row)
+
+    def select_layer(self, name: str):
+        if self._updating:
+            return
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == name:
+                if self.list_widget.currentRow() != row:
+                    self._updating = True
+                    self.list_widget.setCurrentRow(row)
+                    self._updating = False
+                break
+
+    def current_layer_name(self) -> str | None:
+        item = self.list_widget.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _on_item_selection_changed(self):
+        if self._updating:
+            return
+        name = self.current_layer_name()
+        if name:
+            self.layer_selected.emit(name)
+
+    def _toggle_eye(self, name: str):
+        layer = self._layers_cache.get(name, {})
+        new_visible = not bool(layer.get("visible", True))
+        for row in range(self.list_widget.count()):
+            item = self.list_widget.item(row)
+            if item.data(Qt.ItemDataRole.UserRole) == name:
+                w = self.list_widget.itemWidget(item)
+                if w:
+                    btn = w.findChild(QPushButton)
+                    if btn:
+                        btn.setIcon(_make_eye_icon(new_visible))
+                        btn.setToolTip("Hide layer" if new_visible else "Show layer")
+                break
+        self.visibility_toggled.emit(name, new_visible)
+
+    def _on_rows_moved(self, parent, start, end, destination, row):
+        if self._updating:
+            return
+        # After internal drag-drop, Qt may drop the custom widget on the moved item.
+        # Ensure all items still have their widget attached.
+        self._ensure_all_item_widgets()
+        self._emit_reordered()
+
+    def _ensure_all_item_widgets(self):
+        for r in range(self.list_widget.count()):
+            item = self.list_widget.item(r)
+            if not self.list_widget.itemWidget(item):
+                name = item.data(Qt.ItemDataRole.UserRole)
+                layer = self._layers_cache.get(name, {})
+                self.list_widget.setItemWidget(item, self._create_item_widget(name, layer))
+
+    def _emit_reordered(self):
+        order = []
+        for r in range(self.list_widget.count()):
+            it = self.list_widget.item(r)
+            name = it.data(Qt.ItemDataRole.UserRole)
+            if name:
+                order.append(name)
+        self.reordered.emit(order)
+
+    def move_selected_up(self):
+        """Move item up in list (closer to front/top Z) safely without losing widget."""
+        row = self.list_widget.currentRow()
+        if row <= 0:
+            return
+        names = [self.list_widget.item(r).data(Qt.ItemDataRole.UserRole) for r in range(self.list_widget.count())]
+        selected_name = names[row]
+        # Swap with predecessor
+        names[row], names[row - 1] = names[row - 1], names[row]
+
+        self._rebuild_from_names(names, selected_name)
+        self._emit_reordered()
+
+    def move_selected_down(self):
+        """Move item down in list (closer to back/lower Z) safely without losing widget."""
+        row = self.list_widget.currentRow()
+        if row < 0 or row >= self.list_widget.count() - 1:
+            return
+        names = [self.list_widget.item(r).data(Qt.ItemDataRole.UserRole) for r in range(self.list_widget.count())]
+        selected_name = names[row]
+        # Swap with successor
+        names[row], names[row + 1] = names[row + 1], names[row]
+
+        self._rebuild_from_names(names, selected_name)
+        self._emit_reordered()
+
+    def _rebuild_from_names(self, names: list[str], selected_name: str):
+        self._updating = True
+        self.list_widget.clear()
+        target_row = 0
+        for r, name in enumerate(names):
+            layer = self._layers_cache.get(name, {})
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setSizeHint(QSize(0, 26))
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, self._create_item_widget(name, layer))
+            if name == selected_name:
+                target_row = r
+        self._updating = False
+        self.list_widget.setCurrentRow(target_row)
+
 class FasTrackWindow(QMainWindow):
     def __init__(self, video_path: str | None, game: str | None = None, config_path: str | Path | None = None):
         super().__init__()
@@ -422,6 +664,7 @@ class FasTrackWindow(QMainWindow):
         splitter.addWidget(center)
         splitter.addWidget(right)
         splitter.setSizes([330, 740, 360])
+        self._rebuild_layer_combo()
         root.addWidget(splitter, 1)
         self.setCentralWidget(central)
         self.setStatusBar(QStatusBar())
@@ -612,12 +855,11 @@ class FasTrackWindow(QMainWindow):
         layout.setContentsMargins(4, 0, 0, 0)
         layer_group = QGroupBox("Layer editor")
         layer_layout = QVBoxLayout(layer_group)
-        self.layer_combo = QComboBox()
-        for name, layer in sorted(self.config["layers"].items(), key=lambda pair: pair[1].get("z", 0)):
-            if name != "background":
-                self.layer_combo.addItem(name.replace("_", " ").title(), name)
-        self.layer_combo.currentIndexChanged.connect(self.select_layer)
-        layer_layout.addWidget(self.layer_combo)
+        self.layer_stack = LayerStackWidget()
+        self.layer_stack.layer_selected.connect(self._on_stack_layer_selected)
+        self.layer_stack.visibility_toggled.connect(self._on_stack_visibility_toggled)
+        self.layer_stack.reordered.connect(self._on_stack_reordered)
+        layer_layout.addWidget(self.layer_stack)
         vis_opacity_row = QHBoxLayout()
         self.visible_check = QCheckBox("Visible")
         self.visible_check.stateChanged.connect(self.toggle_layer_visible)
@@ -1074,7 +1316,13 @@ class FasTrackWindow(QMainWindow):
             self.render_status.setText("Ready to render")
 
     def _active_layer_name(self) -> str:
-        return str(self.layer_combo.currentData())
+        name = self.layer_stack.current_layer_name()
+        if name:
+            return name
+        for k in self.config.get("layers", {}):
+            if k != "background":
+                return k
+        return "main"
 
     def select_layer(self, _index: int = 0):
         self._commit_pending_undo()
@@ -1208,6 +1456,8 @@ class FasTrackWindow(QMainWindow):
         item = self.layer_items.get(name)
         if item:
             item.setVisible(visible)  # Child resize grips hide with the layer.
+        if hasattr(self, 'layer_stack'):
+            self.layer_stack.populate(self.config.get('layers', {}), name)
 
     def _commit_pending_undo(self):
         if self._undo_commit_timer.isActive():
@@ -1341,14 +1591,9 @@ class FasTrackWindow(QMainWindow):
             pass  # Remembering the template must never break switching.
 
     def _rebuild_layer_combo(self):
-        self.layer_combo.blockSignals(True)
-        self.layer_combo.clear()
-        for name, layer in sorted(self.config["layers"].items(), key=lambda pair: pair[1].get("z", 0)):
-            if name != "background":
-                self.layer_combo.addItem(name.replace("_", " ").title(), name)
-        self.layer_combo.blockSignals(False)
-        if self.layer_combo.count():
-            self.layer_combo.setCurrentIndex(0)
+        active = self.layer_stack.current_layer_name()
+        self.layer_stack.populate(self.config.get("layers", {}), active)
+        self.select_layer()
 
     # -- canvas interaction controller ------------------------------------
 
@@ -1369,9 +1614,33 @@ class FasTrackWindow(QMainWindow):
             self.statusBar().showMessage("Resize grips hidden — use the position/size fields to resize")
 
     def layer_selected(self, name: str):
-        index = self.layer_combo.findData(name)
-        if index >= 0 and index != self.layer_combo.currentIndex():
-            self.layer_combo.setCurrentIndex(index)
+        self.layer_stack.select_layer(name)
+        self.select_layer()
+    def _on_stack_layer_selected(self, name: str):
+        self.select_layer()
+
+    def _on_stack_visibility_toggled(self, name: str, visible: bool):
+        self._snapshot("Show " + name.replace("_", " ") if visible else "Hide " + name.replace("_", " "))
+        self.config["layers"][name]["visible"] = visible
+        item = self.layer_items.get(name)
+        if item:
+            item.setVisible(visible)
+        if self._active_layer_name() == name:
+            self.visible_check.blockSignals(True)
+            self.visible_check.setChecked(visible)
+            self.visible_check.blockSignals(False)
+
+    def _on_stack_reordered(self, top_to_bottom_order: list[str]):
+        """Reassign Z values based on list ordering (top item = highest Z)."""
+        self._snapshot("Reorder layers")
+        for idx, name in enumerate(reversed(top_to_bottom_order)):
+            z_val = (idx + 1) * 10
+            self.config["layers"][name]["z"] = z_val
+            item = self.layer_items.get(name)
+            if item:
+                item.setZValue(float(z_val))
+        self.statusBar().showMessage("Layer stacking order updated")
+
 
     def layer_interaction_started(self, name: str, action: str):
         """Capture a pre-interaction snapshot so a committed drag can be undone."""
@@ -1429,6 +1698,7 @@ class FasTrackWindow(QMainWindow):
 
     def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         self.config = clone_config(snapshot)
+        self._rebuild_layer_combo()
         self.refresh_canvas()
         self._update_undo_buttons()
 
@@ -1511,7 +1781,9 @@ class FasTrackWindow(QMainWindow):
             item.setOpacity(max(0.0, min(1.0, float(layer.get("opacity", 1.0)))))
             self.scene.addItem(item)
             self.layer_items[name] = item
-        self.select_layer(self.layer_combo.currentIndex())
+        if hasattr(self, 'layer_stack'):
+            self.layer_stack.populate(self.config.get('layers', {}), self._active_layer_name())
+        self.select_layer()
         self._sync_background_controls()
         self.preview_view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
