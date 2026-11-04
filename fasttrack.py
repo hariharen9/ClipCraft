@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", help="Path to config.json")
     parser.add_argument("--encoder", choices=("auto", "nvenc", "cpu"), default="auto", help="GPU/CPU encoder")
     parser.add_argument("--gui", "-gui", action="store_true", help="Open the visual editor")
+    parser.add_argument("--batch", action="store_true", help="Open the batch render UI")
     parser.add_argument("--render", action="store_true", help="Render headlessly (requires --in and --out)")
     parser.add_argument("--print-command", action="store_true", help="Print the generated FFmpeg command and exit")
     return parser
@@ -63,6 +64,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     game = (args.game or "").lower() or None
+
+    if args.batch:
+        try:
+            from fasttrack.batch_gui import launch_batch_gui
+            return int(launch_batch_gui(game, args.config) or 0)
+        except ImportError as exc:
+            print(
+                "[FasTrack] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
+                + f"Details: {exc}", file=sys.stderr
+            )
+            return 2
+        except Exception as exc:
+            print(f"[FasTrack] Could not start batch UI: {exc}", file=sys.stderr)
+            return 2
 
     if args.gui or not args.render and (args.in_time is None or args.out_time is None):
         # The GUI resolves the template itself: --config, -g, or the last used one.
