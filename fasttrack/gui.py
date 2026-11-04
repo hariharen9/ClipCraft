@@ -31,6 +31,7 @@ from .renderer import probe_video, run_render
 HANDLE_SIZE = 6.0
 MIN_LAYER_SIZE = 10.0
 BG_DEFAULTS = {"blur": 22, "brightness": -0.08, "saturation": 0.82}
+SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
 
 class HandleItem(QGraphicsRectItem):
@@ -317,6 +318,7 @@ class FasTrackWindow(QMainWindow):
         self.setWindowTitle("FasTrack Video Editor — Gaming Shorts")
         self.resize(1510, 940)
         self.setMinimumSize(1100, 720)
+        self.setAcceptDrops(True)
         state = load_state()
         self.config, self.config_path, self.game = self._resolve_template(game, config_path, state)
         ensure_assets(self.config, self.config_path)
@@ -351,6 +353,9 @@ class FasTrackWindow(QMainWindow):
         self._undo_stack: list[tuple[str, dict[str, Any]]] = []
         self._redo_stack: list[tuple[str, dict[str, Any]]] = []
         self._pending_undo: tuple[str, dict[str, Any]] | None = None
+        self._undo_commit_timer = QTimer(self)
+        self._undo_commit_timer.setSingleShot(True)
+        self._undo_commit_timer.timeout.connect(self._commit_pending_undo)
         self._build_ui()
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
         undo_shortcut.activated.connect(self.undo)
@@ -593,7 +598,7 @@ class FasTrackWindow(QMainWindow):
         self.preview_view.setBackgroundBrush(QBrush(QColor(16, 18, 24)))
         self.preview_view.setFrameShape(QFrame.Shape.StyledPanel)
         layout.addWidget(self.preview_view, 1)
-        hint = QLabel("Select a layer on the right, then edit its output rectangle and source crop. The crop preview updates on Apply.")
+        hint = QLabel("Select a layer on the right to tweak its position, size, and source crop live.")
         hint.setWordWrap(True)
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
@@ -641,6 +646,8 @@ class FasTrackWindow(QMainWindow):
             spin.setDecimals(2)
             spin.setSingleStep(1.0)
             spin.setSuffix(" %")
+            spin.valueChanged.connect(self._update_active_layer_geometry)
+            spin.editingFinished.connect(self._commit_pending_undo)
             self.geom_fields[key] = spin
             geometry_form.addRow(title, spin)
         geometry_inner.addLayout(geometry_form)
@@ -659,12 +666,11 @@ class FasTrackWindow(QMainWindow):
             spin.setDecimals(2)
             spin.setSingleStep(1.0)
             spin.setSuffix(" %")
+            spin.valueChanged.connect(self._update_active_layer_crop)
+            spin.editingFinished.connect(self._commit_pending_undo)
             self.crop_fields[key] = spin
             crop_form.addRow(title, spin)
         layer_layout.addWidget(crop_group)
-        apply_button = QPushButton("Apply to preview")
-        apply_button.clicked.connect(self.apply_layer_changes)
-        layer_layout.addWidget(apply_button)
         self.reset_crop_button = QPushButton("Reset to default")
         self.reset_crop_button.setToolTip("Reset source crop to config defaults")
         self.reset_crop_button.clicked.connect(self.reset_crop_to_default)
@@ -694,6 +700,33 @@ class FasTrackWindow(QMainWindow):
         layout.addWidget(actions_group)
         layout.addStretch(1)
         return panel
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                    event.acceptProposedAction()
+                    return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
+                    event.acceptProposedAction()
+                    return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    path = Path(url.toLocalFile())
+                    if path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS and path.is_file():
+                        event.acceptProposedAction()
+                        self.load_video(str(path))
+                        return
+        super().dropEvent(event)
 
     def browse_video(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -1029,6 +1062,7 @@ class FasTrackWindow(QMainWindow):
         return str(self.layer_combo.currentData())
 
     def select_layer(self, _index: int = 0):
+        self._commit_pending_undo()
         name = self._active_layer_name()
         layer = self.config["layers"].get(name, {})
         item = self.layer_items.get(name)
@@ -1132,28 +1166,71 @@ class FasTrackWindow(QMainWindow):
         if item:
             item.setVisible(visible)  # Child resize grips hide with the layer.
 
-    def apply_layer_changes(self):
+    def _commit_pending_undo(self):
+        if self._undo_commit_timer.isActive():
+            self._undo_commit_timer.stop()
+        if self._pending_undo is None:
+            return
+        label, snapshot = self._pending_undo
+        self._pending_undo = None
+        if self.config != snapshot:
+            self._push_undo(label, snapshot)
+
+    def _update_active_layer_geometry(self):
         name = self._active_layer_name()
-        layer = self.config["layers"][name]
-        self._snapshot(f"Edit {name.replace('_', ' ')}")
-        rect = [self.geom_fields[k].value() / 100.0 for k in ("x", "y", "w", "h")]
-        rect[2] = max(0.005, rect[2])
-        rect[3] = max(0.005, rect[3])
-        layer["rect"] = rect
-        if layer.get("kind") == "video":
-            crop = [self.crop_fields[k].value() / 100.0 for k in ("x", "y", "w", "h")]
-            crop[2] = max(0.005, min(crop[2], 1.0 - crop[0]))
-            crop[3] = max(0.005, min(crop[3], 1.0 - crop[1]))
-            crop[0] = min(crop[0], 1.0 - crop[2])
-            crop[1] = min(crop[1], 1.0 - crop[3])
-            layer["crop"] = crop
-        self.refresh_canvas()
-        if layer.get("kind") == "image":
-            self.statusBar().showMessage(
-                f"Updated {name} layer — drag the corner to resize freely; hold Shift to keep the aspect ratio"
-            )
-        else:
-            self.statusBar().showMessage(f"Updated {name} layer")
+        layer = self.config["layers"].get(name)
+        if not layer:
+            return
+        if self._pending_undo is None:
+            self._pending_undo = (f"Edit {name.replace('_', ' ')}", clone_config(self.config))
+        x = self.geom_fields["x"].value() / 100.0
+        y = self.geom_fields["y"].value() / 100.0
+        w = max(0.005, self.geom_fields["w"].value() / 100.0)
+        h = max(0.005, self.geom_fields["h"].value() / 100.0)
+        layer["rect"] = [x, y, w, h]
+
+        item = self.layer_items.get(name)
+        if item is not None:
+            cw, ch = self._preview_size()
+            px, py, pw, ph = x * cw, y * ch, w * cw, h * ch
+            if layer.get("kind") == "image" and layer.get("fit", "fill") == "contain":
+                image, _ = layer_preview_image(name, layer, self.current_frame, cw, ch, self.config_path)
+                if image is not None:
+                    ih, iw = image.shape[:2]
+                    px += (pw - iw) / 2.0
+                    py += (ph - ih) / 2.0
+                    pw, ph = float(iw), float(ih)
+            item.set_pos_size(px, py, pw, ph)
+        self._undo_commit_timer.start(800)
+
+    def _update_active_layer_crop(self):
+        name = self._active_layer_name()
+        layer = self.config["layers"].get(name)
+        if not layer or layer.get("kind") != "video":
+            return
+        if self._pending_undo is None:
+            self._pending_undo = (f"Crop {name.replace('_', ' ')}", clone_config(self.config))
+        cx = self.crop_fields["x"].value() / 100.0
+        cy = self.crop_fields["y"].value() / 100.0
+        cw = max(0.005, min(self.crop_fields["w"].value() / 100.0, 1.0 - cx))
+        ch = max(0.005, min(self.crop_fields["h"].value() / 100.0, 1.0 - cy))
+        cx = min(cx, 1.0 - cw)
+        cy = min(cy, 1.0 - ch)
+        layer["crop"] = [cx, cy, cw, ch]
+
+        item = self.layer_items.get(name)
+        if item is not None and self.current_frame is not None:
+            cw, ch = self._preview_size()
+            image, _ = layer_preview_image(name, layer, self.current_frame, cw, ch, self.config_path)
+            if image is not None:
+                item.set_frame_pixmap(QPixmap.fromImage(to_qimage_array(image)))
+        self._undo_commit_timer.start(800)
+
+    def apply_layer_changes(self):
+        """Apply changes and commit undo immediately."""
+        self._update_active_layer_geometry()
+        self._update_active_layer_crop()
+        self._commit_pending_undo()
 
     def reset_crop_to_default(self):
         name = self._active_layer_name()
@@ -1255,6 +1332,7 @@ class FasTrackWindow(QMainWindow):
 
     def layer_interaction_started(self, name: str, action: str):
         """Capture a pre-interaction snapshot so a committed drag can be undone."""
+        self._commit_pending_undo()
         self._pending_undo = (f"{action} {name.replace('_', ' ')}", clone_config(self.config))
 
     def layer_committed(self, name: str, item: LayerItem, action: str):
@@ -1289,6 +1367,7 @@ class FasTrackWindow(QMainWindow):
         self.redo_button.setEnabled(bool(self._redo_stack))
 
     def undo(self):
+        self._commit_pending_undo()
         if not self._undo_stack:
             return
         label, snapshot = self._undo_stack.pop()
@@ -1297,6 +1376,7 @@ class FasTrackWindow(QMainWindow):
         self.statusBar().showMessage(f"Undid: {label}")
 
     def redo(self):
+        self._commit_pending_undo()
         if not self._redo_stack:
             return
         label, snapshot = self._redo_stack.pop()

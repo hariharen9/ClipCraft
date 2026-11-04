@@ -11,7 +11,7 @@ The same source recording is used for four moving-picture layers:
 3. A separate top-right killfeed crop.
 4. A separate lower-left chat crop.
 
-Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its *output rectangle* and its *source crop* are both editable. Image layers can be placed and resized freely; they always start at their natural aspect ratio.
+Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its _output rectangle_ and its _source crop_ are both editable. Image layers can be placed and resized freely; they always start at their natural aspect ratio.
 
 Default output: **1080 × 1920, 60 fps, MP4/H.264**, with the source audio retained. Rendering uses NVIDIA NVENC on a supported NVIDIA driver / FFmpeg build; `auto` falls back to CPU x264 if NVENC fails.
 
@@ -80,7 +80,7 @@ FasTrack remembers the folder of the last recording you opened (stored in `fastt
 - Use **Output position / size** to set its rectangle as percentages of the portrait canvas.
 - For `main`, `killfeed` and `chat`, use **Source crop** to choose which part of the original 16:9 footage appears in that layer. Crop values are percentages of the original video frame.
 - Toggle **Visible** to hide a layer.
-- Click **Apply to preview** after changing numeric fields.
+- Output position/size and source crop fields update the live preview in real time as you type or spin.
 - Click **Save layout to template** to keep your changes in the template file selected in the Template dropdown (e.g. `templates/valorant.json`).
 
 The preview is a composition preview at a smaller canvas size; the final render uses your selected output dimensions and FFmpeg filters.
@@ -218,7 +218,7 @@ To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"
 - The preview is a frame-based composition editor, not a full multitrack NLE. It is designed for selecting a short segment and adjusting the reusable layout quickly.
 - For the current template, the killfeed/chat source crop is a fixed rectangle. If the HUD moves during a recording (for example due to a different resolution or HUD scale), adjust the crop to match that recording before rendering.
 - The main gameplay crop defaults to filling its center window. If you prefer to preserve the full 16:9 gameplay frame, widen the main window or change its `fit` value to `contain`.
-- Rendering and preview are separate: dragging layers changes the layout, while source-crop field edits are applied with **Apply to preview**.
+- The preview is completely live: dragging layers or editing numeric position/crop fields updates the composition in real time.
 
 ## Troubleshooting
 
