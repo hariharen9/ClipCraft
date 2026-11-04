@@ -129,6 +129,9 @@ def build_filter_complex(
             )
         else:
             filter_body = f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+        opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+        if opacity < 0.9999:
+            filter_body += f",format=rgba,colorchannelmixer=aa={opacity:.4f}"
         label = f"lay_{name}"
         parts.append(f"[vsrc{index}]{filter_body}[{label}]")
         next_label = f"comp{index}"

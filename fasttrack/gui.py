@@ -618,9 +618,24 @@ class FasTrackWindow(QMainWindow):
                 self.layer_combo.addItem(name.replace("_", " ").title(), name)
         self.layer_combo.currentIndexChanged.connect(self.select_layer)
         layer_layout.addWidget(self.layer_combo)
+        vis_opacity_row = QHBoxLayout()
         self.visible_check = QCheckBox("Visible")
         self.visible_check.stateChanged.connect(self.toggle_layer_visible)
-        layer_layout.addWidget(self.visible_check)
+        vis_opacity_row.addWidget(self.visible_check)
+        vis_opacity_row.addSpacing(10)
+        vis_opacity_row.addWidget(QLabel("Opacity"))
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(100)
+        self.opacity_slider.sliderPressed.connect(self._opacity_slider_pressed)
+        self.opacity_slider.sliderReleased.connect(self._opacity_slider_released)
+        self.opacity_slider.valueChanged.connect(self._opacity_slider_changed)
+        vis_opacity_row.addWidget(self.opacity_slider, 1)
+        self.opacity_label = QLabel("100%")
+        self.opacity_label.setMinimumWidth(38)
+        self.opacity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        vis_opacity_row.addWidget(self.opacity_label)
+        layer_layout.addLayout(vis_opacity_row)
 
         self.asset_group = QGroupBox("Image asset")
         asset_layout = QHBoxLayout(self.asset_group)
@@ -1084,6 +1099,11 @@ class FasTrackWindow(QMainWindow):
         self.visible_check.blockSignals(True)
         self.visible_check.setChecked(bool(layer.get("visible", True)))
         self.visible_check.blockSignals(False)
+        opacity = float(layer.get("opacity", 1.0))
+        self.opacity_slider.blockSignals(True)
+        self.opacity_slider.setValue(int(round(opacity * 100)))
+        self.opacity_slider.blockSignals(False)
+        self.opacity_label.setText(f"{int(round(opacity * 100))}%")
         is_image = layer.get("kind") == "image"
         self.asset_group.setVisible(is_image)
         self.asset_edit.setText(str(layer.get("asset", "")) if is_image else "")
@@ -1156,6 +1176,29 @@ class FasTrackWindow(QMainWindow):
         self._fit_layer_to_asset(name)
         self.refresh_canvas()
         self.statusBar().showMessage(f"{name} rectangle matched to the image's aspect ratio")
+
+    def _opacity_slider_pressed(self):
+        self._commit_pending_undo()
+        name = self._active_layer_name()
+        self._pending_undo = (f"Opacity {name.replace('_', ' ')}", clone_config(self.config))
+
+    def _opacity_slider_released(self):
+        self._commit_pending_undo()
+
+    def _opacity_slider_changed(self, value: int):
+        name = self._active_layer_name()
+        layer = self.config["layers"].get(name)
+        if not layer:
+            return
+        if self._pending_undo is None:
+            self._pending_undo = (f"Opacity {name.replace('_', ' ')}", clone_config(self.config))
+        opacity = max(0.0, min(1.0, value / 100.0))
+        layer["opacity"] = opacity
+        self.opacity_label.setText(f"{value}%")
+        item = self.layer_items.get(name)
+        if item is not None:
+            item.setOpacity(opacity)
+        self._undo_commit_timer.start(800)
 
     def toggle_layer_visible(self, state: int):
         name = self._active_layer_name()
@@ -1465,6 +1508,7 @@ class FasTrackWindow(QMainWindow):
                              grip_size=HANDLE_SIZE * self.preview_scale)
             item.set_grips_visible(self.show_grips)
             item.setZValue(float(layer.get("z", 10)))
+            item.setOpacity(max(0.0, min(1.0, float(layer.get("opacity", 1.0)))))
             self.scene.addItem(item)
             self.layer_items[name] = item
         self.select_layer(self.layer_combo.currentIndex())
@@ -1624,9 +1668,9 @@ class FasTrackWindow(QMainWindow):
                     if key in (Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
                         return super().eventFilter(watched, event)
 
-                # 4. Background look sliders: Left/Right nudges slider unless Shift is held
+                # 4. Background look & opacity sliders: Left/Right nudges slider unless Shift is held
                 bg_slider_widgets = [s for s, _, _, _ in getattr(self, "bg_sliders", {}).values()]
-                if watched in bg_slider_widgets:
+                if watched in bg_slider_widgets or watched is getattr(self, "opacity_slider", None):
                     if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not shift:
                         return super().eventFilter(watched, event)
 
