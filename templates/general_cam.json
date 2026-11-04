@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "name": "General (With Facecam)",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "encoder": "auto",
+    "quality": 14,
+    "nvenc_preset": "p5",
+    "x264_preset": "medium"
+  },
+  "background": {
+    "blur": 2.0,
+    "brightness": -0.07,
+    "saturation": 1.15
+  },
+  "branding": {
+    "channel_name": "CREATOR",
+    "youtube_handle": "@creator",
+    "instagram_handle": "@creator"
+  },
+  "layers": {
+    "background": {
+      "kind": "background",
+      "rect": [0.0, 0.0, 1.0, 1.0],
+      "z": 0,
+      "visible": true
+    },
+    "facecam": {
+      "kind": "video",
+      "rect": [0.05, 0.04, 0.90, 0.30],
+      "crop": [0.70, 0.65, 0.28, 0.32],
+      "fit": "cover",
+      "z": 15,
+      "visible": true
+    },
+    "main": {
+      "kind": "video",
+      "rect": [0.0, 0.36, 1.0, 0.52],
+      "crop": [0.0, 0.0, 1.0, 1.0],
+      "fit": "cover",
+      "z": 10,
+      "visible": true
+    }
+  }
+}
+

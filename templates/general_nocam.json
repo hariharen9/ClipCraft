@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "name": "General (Gameplay Focus)",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "encoder": "auto",
+    "quality": 14,
+    "nvenc_preset": "p5",
+    "x264_preset": "medium"
+  },
+  "background": {
+    "blur": 2.2,
+    "brightness": -0.10,
+    "saturation": 1.20
+  },
+  "branding": {
+    "channel_name": "CREATOR",
+    "youtube_handle": "@creator",
+    "instagram_handle": "@creator"
+  },
+  "layers": {
+    "background": {
+      "kind": "background",
+      "rect": [0.0, 0.0, 1.0, 1.0],
+      "z": 0,
+      "visible": true
+    },
+    "main": {
+      "kind": "video",
+      "rect": [0.0, 0.22, 1.0, 0.5625],
+      "crop": [0.0, 0.0, 1.0, 1.0],
+      "fit": "contain",
+      "z": 10,
+      "visible": true
+    }
+  }
+}
+

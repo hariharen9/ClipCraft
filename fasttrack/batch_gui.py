@@ -1,8 +1,8 @@
-"""FasTrack Batch Render — trim and render multiple clips with one template.
+"""FasTrack Batch Render — trim and render multiple clips with live 9:16 preview.
 
-Opens a dedicated window where you add several gameplay recordings, set IN/OUT
-points for each one visually, and batch-render them all into 9:16 shorts using
-the same layout template.
+Allows adding multiple recordings, setting IN/OUT times visually, seeing an instant
+live render preview according to the selected layout template (Valorant, General, etc.),
+and batch-rendering all clips.
 """
 
 from __future__ import annotations
@@ -14,12 +14,13 @@ from typing import Any
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QListWidget, QListWidgetItem, QPushButton, QLabel,
     QDoubleSpinBox, QComboBox, QProgressBar, QFileDialog,
-    QGroupBox, QMessageBox, QSizePolicy,
+    QGroupBox, QMessageBox, QSizePolicy, QFrame
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize, QPointF
 from PySide6.QtGui import (
@@ -29,11 +30,11 @@ from PySide6.QtGui import (
 
 from fasttrack.renderer import probe_video, run_render
 from fasttrack.config import (
-    load_config, template_path, clone_config,
-    load_state, save_state,
+    load_config, template_path, available_templates, clone_config,
+    load_state, save_state, resolve_asset, contain_fit,
 )
 from fasttrack.assets import ensure_assets
-from fasttrack.preview import to_qimage_array
+from fasttrack.preview import to_qimage_array, render_background, normalized_crop, fit_cover, fit_contain
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
@@ -93,13 +94,11 @@ class TrimTimeline(QWidget):
         self.position = 0.0
         self.in_time = 0.0
         self.out_time = 0.0
-        self.setMinimumHeight(48)
-        self.setMaximumHeight(48)
+        self.setMinimumHeight(44)
+        self.setMaximumHeight(44)
         self.setCursor(Qt.PointingHandCursor)
         self._dragging = False
         self._margin = 12
-
-    # -- Public API --
 
     def set_range(self, duration: float, in_t: float, out_t: float):
         self.duration = max(0.0, duration)
@@ -116,8 +115,6 @@ class TrimTimeline(QWidget):
         self.out_time = out_t
         self.update()
 
-    # -- Coordinate mapping --
-
     def _time_to_x(self, t: float) -> float:
         if self.duration <= 0:
             return float(self._margin)
@@ -130,20 +127,17 @@ class TrimTimeline(QWidget):
         frac = (x - self._margin) / track_w
         return max(0.0, min(self.duration, frac * self.duration))
 
-    # -- Painting --
-
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         m = self._margin
         tw = w - 2 * m
-
-        track_y, track_h = 18, 12
+        track_y, track_h = 16, 12
 
         # Track background
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(55, 55, 60))
+        p.setBrush(QColor(48, 48, 54))
         p.drawRoundedRect(m, track_y, tw, track_h, 4, 4)
 
         if self.duration > 0:
@@ -151,7 +145,7 @@ class TrimTimeline(QWidget):
             out_x = self._time_to_x(self.out_time)
 
             # Selected IN–OUT region
-            p.setBrush(QColor(0, 120, 215, 140))
+            p.setBrush(QColor(0, 140, 255, 150))
             p.drawRoundedRect(
                 int(in_x), track_y, max(1, int(out_x - in_x)), track_h, 3, 3,
             )
@@ -159,29 +153,29 @@ class TrimTimeline(QWidget):
             # IN marker (green triangle)
             p.setBrush(QColor(76, 175, 80))
             p.drawPolygon(QPolygonF([
-                QPointF(in_x - 5, track_y - 3),
-                QPointF(in_x + 5, track_y - 3),
-                QPointF(in_x, track_y + 5),
+                QPointF(in_x - 5, track_y - 4),
+                QPointF(in_x + 5, track_y - 4),
+                QPointF(in_x, track_y + 4),
             ]))
 
             # OUT marker (red triangle)
             p.setBrush(QColor(244, 67, 54))
             p.drawPolygon(QPolygonF([
-                QPointF(out_x - 5, track_y - 3),
-                QPointF(out_x + 5, track_y - 3),
-                QPointF(out_x, track_y + 5),
+                QPointF(out_x - 5, track_y - 4),
+                QPointF(out_x + 5, track_y - 4),
+                QPointF(out_x, track_y + 4),
             ]))
 
             # Playhead (white line + circle)
             px = self._time_to_x(self.position)
             p.setPen(QPen(QColor(255, 255, 255), 2))
-            p.drawLine(QPointF(px, track_y - 6), QPointF(px, track_y + track_h + 6))
+            p.drawLine(QPointF(px, track_y - 5), QPointF(px, track_y + track_h + 5))
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255))
             p.drawEllipse(QPointF(px, track_y + track_h / 2.0), 5, 5)
 
         # Endpoint time labels
-        p.setPen(QColor(170, 170, 170))
+        p.setPen(QColor(160, 160, 160))
         font = p.font()
         font.setPointSize(8)
         p.setFont(font)
@@ -189,8 +183,6 @@ class TrimTimeline(QWidget):
         dur_text = _fmt_time(self.duration)
         p.drawText(w - m - p.fontMetrics().horizontalAdvance(dur_text), h - 2, dur_text)
         p.end()
-
-    # -- Mouse interaction --
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -266,28 +258,25 @@ class BatchRenderWorker(QThread):
 
 
 class BatchWindow(QMainWindow):
-    """Batch trim & render window — pick IN/OUT for multiple clips, render all."""
+    """Batch trim & render window with live 9:16 layout preview."""
 
     def __init__(self, game: str | None = None, config_path: str | None = None):
         super().__init__()
-        self.setWindowTitle("FasTrack — Batch Render")
-        self.setMinimumSize(960, 640)
-        self.resize(1200, 750)
+        self.setWindowTitle("FasTrack — Batch Render Studio")
+        self.setMinimumSize(1100, 700)
+        self.resize(1340, 820)
 
         icon_path = Path(__file__).resolve().parent.parent / "assets" / "fastrack.ico"
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
 
-        # ── Load template ───────────────────────────────────────────
-        self._game = game or "valorant"
-        if config_path:
-            self._config, self._config_path = load_config(config_path)
-        else:
-            tmpl = template_path(self._game)
-            if not tmpl.is_file():
-                raise FileNotFoundError(f"Template not found: {tmpl}")
-            self._config, self._config_path = load_config(tmpl)
-        ensure_assets(self._config, self._config_path)
+        self._ui_state = load_state()
+
+        # ── Template resolution ─────────────────────────────────────
+        self._game = game or self._ui_state.get("last_template") or "valorant"
+        self._config: dict[str, Any] = {}
+        self._config_path: Path = Path()
+        self._load_active_template(self._game, config_path)
 
         # ── Internal state ──────────────────────────────────────────
         self._jobs: list[BatchJob] = []
@@ -296,17 +285,37 @@ class BatchWindow(QMainWindow):
         self._current_frame: np.ndarray | None = None
         self._playing = False
         self._render_worker: BatchRenderWorker | None = None
+        self._cached_image_layers: list[dict[str, Any]] = []
 
         self._play_timer = QTimer(self)
         self._play_timer.setInterval(33)  # ~30 fps preview
         self._play_timer.timeout.connect(self._play_tick)
 
-        self._ui_state = load_state()
-
         # ── Build UI ────────────────────────────────────────────────
         self._build_ui()
+        self._cache_template_assets()
         self._update_buttons()
         self.setAcceptDrops(True)
+
+    def _load_active_template(self, game_id: str, custom_path: str | None = None):
+        """Loads and prepares the specified template JSON."""
+        if custom_path:
+            self._config, self._config_path = load_config(custom_path)
+            self._game = Path(custom_path).stem.lower()
+        else:
+            tmpl = template_path(game_id)
+            if not tmpl.is_file():
+                # Fallback to first available
+                avail = available_templates()
+                if avail:
+                    game_id = avail[0][0]
+                    tmpl = template_path(game_id)
+            self._config, self._config_path = load_config(tmpl)
+            self._game = game_id
+
+        ensure_assets(self._config, self._config_path)
+        self._ui_state["last_template"] = self._game
+        save_state(self._ui_state)
 
     # ================================================================
     #  UI CONSTRUCTION
@@ -319,14 +328,18 @@ class BatchWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(5)
-        splitter.addWidget(self._build_queue_panel())
-        splitter.addWidget(self._build_preview_panel())
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([300, 900])
-        root.addWidget(splitter, 1)
+        # Main horizontal splitter: [Queue (Left) | Source Editor (Center) | Render Preview (Right)]
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setHandleWidth(6)
+        main_splitter.addWidget(self._build_queue_panel())
+        main_splitter.addWidget(self._build_source_panel())
+        main_splitter.addWidget(self._build_preview_panel())
+
+        main_splitter.setStretchFactor(0, 3)  # Queue
+        main_splitter.setStretchFactor(1, 7)  # Source Editor
+        main_splitter.setStretchFactor(2, 4)  # Render Preview
+        main_splitter.setSizes([260, 680, 360])
+        root.addWidget(main_splitter, 1)
 
         root.addWidget(self._build_render_bar())
 
@@ -336,15 +349,20 @@ class BatchWindow(QMainWindow):
         panel = QWidget()
         vbox = QVBoxLayout(panel)
         vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(6)
 
         header = QLabel("📁  Clip Queue")
-        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px 0;")
+        header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 2px 0;")
         vbox.addWidget(header)
 
         self._job_list = QListWidget()
         self._job_list.setSelectionMode(QListWidget.SingleSelection)
         self._job_list.currentRowChanged.connect(self._on_job_selected)
-        self._job_list.setStyleSheet("QListWidget::item { padding: 6px 4px; }")
+        self._job_list.setStyleSheet(
+            "QListWidget { background-color: #1e1e24; border: 1px solid #333; border-radius: 4px; }"
+            "QListWidget::item { padding: 6px 4px; border-bottom: 1px solid #2a2a32; }"
+            "QListWidget::item:selected { background-color: #2b384e; }"
+        )
         vbox.addWidget(self._job_list, 1)
 
         btns = QHBoxLayout()
@@ -356,34 +374,35 @@ class BatchWindow(QMainWindow):
         self._remove_btn.clicked.connect(self._remove_selected)
         btns.addWidget(self._remove_btn)
 
-        self._clear_btn = QPushButton("Clear All")
+        self._clear_btn = QPushButton("Clear")
         self._clear_btn.clicked.connect(self._clear_all)
         btns.addWidget(self._clear_btn)
 
         vbox.addLayout(btns)
         return panel
 
-    # -- Right: preview + controls --------------------------------------
+    # -- Center: source video editor (Scrubber, Trim, Controls) ---------
 
-    def _build_preview_panel(self) -> QWidget:
+    def _build_source_panel(self) -> QWidget:
         panel = QWidget()
         vbox = QVBoxLayout(panel)
-        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setContentsMargins(4, 0, 4, 0)
+        vbox.setSpacing(6)
 
         # Video frame display
-        self._frame_label = QLabel("Select a clip from the queue\nor click  '+ Add Videos'")
+        self._frame_label = QLabel("Select a clip from the queue\nor drag & drop videos here")
         self._frame_label.setAlignment(Qt.AlignCenter)
-        self._frame_label.setMinimumSize(320, 200)
+        self._frame_label.setMinimumSize(360, 240)
         self._frame_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._frame_label.setStyleSheet(
-            "background-color: #1a1a1e; border-radius: 4px; color: #666; font-size: 14px;"
+            "background-color: #151518; border-radius: 4px; border: 1px solid #28282c; color: #777; font-size: 14px;"
         )
         vbox.addWidget(self._frame_label, 1)
 
         # Current time display
         self._time_label = QLabel("0:00.000 / 0:00.000")
         self._time_label.setAlignment(Qt.AlignCenter)
-        self._time_label.setStyleSheet("font-size: 13px; font-family: monospace; padding: 2px;")
+        self._time_label.setStyleSheet("font-size: 13px; font-family: monospace; font-weight: bold; color: #ccc;")
         vbox.addWidget(self._time_label)
 
         # Custom timeline
@@ -391,9 +410,9 @@ class BatchWindow(QMainWindow):
         self._timeline.seeked.connect(self._seek_to)
         vbox.addWidget(self._timeline)
 
-        # Playback buttons
+        # Playback controls
         play_row = QHBoxLayout()
-        play_row.setSpacing(4)
+        play_row.setSpacing(6)
         play_row.addStretch()
 
         self._prev_clip_btn = QPushButton("⏮")
@@ -404,19 +423,19 @@ class BatchWindow(QMainWindow):
 
         self._step_back_btn = QPushButton("◀")
         self._step_back_btn.setFixedSize(36, 30)
-        self._step_back_btn.setToolTip("Step back 1 frame  (Left)")
+        self._step_back_btn.setToolTip("Step back 1 frame (Left)")
         self._step_back_btn.clicked.connect(lambda: self._step_frames(-1))
         play_row.addWidget(self._step_back_btn)
 
         self._play_btn = QPushButton("▶  Play")
-        self._play_btn.setFixedSize(100, 34)
-        self._play_btn.setToolTip("Play / Pause  (Space)")
+        self._play_btn.setFixedSize(96, 32)
+        self._play_btn.setToolTip("Play / Pause (Space)")
         self._play_btn.clicked.connect(self._toggle_play)
         play_row.addWidget(self._play_btn)
 
         self._step_fwd_btn = QPushButton("▶")
         self._step_fwd_btn.setFixedSize(36, 30)
-        self._step_fwd_btn.setToolTip("Step forward 1 frame  (Right)")
+        self._step_fwd_btn.setToolTip("Step forward 1 frame (Right)")
         self._step_fwd_btn.clicked.connect(lambda: self._step_frames(1))
         play_row.addWidget(self._step_fwd_btn)
 
@@ -439,40 +458,86 @@ class BatchWindow(QMainWindow):
         self._in_spin.setDecimals(3)
         self._in_spin.setSuffix(" s")
         self._in_spin.setRange(0, 86400)
-        self._in_spin.setFixedWidth(110)
+        self._in_spin.setFixedWidth(100)
         self._in_spin.valueChanged.connect(self._on_in_changed)
         io_row.addWidget(self._in_spin)
 
-        self._set_in_btn = QPushButton("Set IN  [I]")
-        self._set_in_btn.setFixedWidth(100)
-        self._set_in_btn.setToolTip("Set IN point from playhead")
+        self._set_in_btn = QPushButton("Set IN [I]")
+        self._set_in_btn.setFixedWidth(86)
         self._set_in_btn.clicked.connect(self._set_in_from_playhead)
         io_row.addWidget(self._set_in_btn)
 
-        io_row.addSpacing(20)
+        io_row.addSpacing(16)
 
         io_row.addWidget(QLabel("OUT:"))
         self._out_spin = QDoubleSpinBox()
         self._out_spin.setDecimals(3)
         self._out_spin.setSuffix(" s")
         self._out_spin.setRange(0, 86400)
-        self._out_spin.setFixedWidth(110)
+        self._out_spin.setFixedWidth(100)
         self._out_spin.valueChanged.connect(self._on_out_changed)
         io_row.addWidget(self._out_spin)
 
-        self._set_out_btn = QPushButton("Set OUT  [O]")
-        self._set_out_btn.setFixedWidth(100)
-        self._set_out_btn.setToolTip("Set OUT point from playhead")
+        self._set_out_btn = QPushButton("Set OUT [O]")
+        self._set_out_btn.setFixedWidth(86)
         self._set_out_btn.clicked.connect(self._set_out_from_playhead)
         io_row.addWidget(self._set_out_btn)
 
-        io_row.addSpacing(20)
+        io_row.addSpacing(16)
         self._clip_dur_label = QLabel("Clip: 0.000 s")
-        self._clip_dur_label.setStyleSheet("font-weight: bold;")
+        self._clip_dur_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
         io_row.addWidget(self._clip_dur_label)
         io_row.addStretch()
 
         vbox.addLayout(io_row)
+        return panel
+
+    # -- Right: live vertical 9:16 layout preview & template selector ---
+
+    def _build_preview_panel(self) -> QWidget:
+        panel = QWidget()
+        vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(4, 0, 4, 0)
+        vbox.setSpacing(6)
+
+        top_row = QHBoxLayout()
+        top_lbl = QLabel("📱  Render Preview")
+        top_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+        top_row.addWidget(top_lbl)
+        top_row.addStretch()
+        vbox.addLayout(top_row)
+
+        # 9:16 vertical render preview canvas
+        self._render_preview_label = QLabel("9:16 Vertical Output Preview")
+        self._render_preview_label.setAlignment(Qt.AlignCenter)
+        self._render_preview_label.setMinimumSize(220, 390)
+        self._render_preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._render_preview_label.setStyleSheet(
+            "background-color: #0d0d10; border-radius: 6px; border: 2px solid #2a2a30; color: #666; font-size: 12px;"
+        )
+        vbox.addWidget(self._render_preview_label, 1)
+
+        # Template & Layout Box below preview
+        tmpl_group = QGroupBox("Layout Template")
+        tmpl_layout = QVBoxLayout(tmpl_group)
+        tmpl_layout.setContentsMargins(8, 8, 8, 8)
+        tmpl_layout.setSpacing(6)
+
+        t_row = QHBoxLayout()
+        t_row.addWidget(QLabel("Game / Preset:"))
+        self._template_combo = QComboBox()
+        self._populate_templates()
+        self._template_combo.currentIndexChanged.connect(self._on_template_selected)
+        t_row.addWidget(self._template_combo, 1)
+        tmpl_layout.addLayout(t_row)
+
+        self._template_info_lbl = QLabel("")
+        self._template_info_lbl.setStyleSheet("color: #888; font-size: 11px;")
+        self._template_info_lbl.setWordWrap(True)
+        tmpl_layout.addWidget(self._template_info_lbl)
+        self._update_template_info_label()
+
+        vbox.addWidget(tmpl_group)
         return panel
 
     # -- Bottom: render bar ---------------------------------------------
@@ -485,15 +550,15 @@ class BatchWindow(QMainWindow):
         hbox.addWidget(QLabel("Encoder:"))
         self._encoder_combo = QComboBox()
         self._encoder_combo.addItems(["Auto (NVENC → CPU)", "NVENC (GPU)", "CPU (x264)"])
-        self._encoder_combo.setFixedWidth(170)
+        self._encoder_combo.setFixedWidth(160)
         hbox.addWidget(self._encoder_combo)
 
         hbox.addSpacing(16)
 
         self._render_btn = QPushButton("🚀  Render All")
         self._render_btn.setFixedHeight(36)
-        self._render_btn.setMinimumWidth(170)
-        self._render_btn.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self._render_btn.setMinimumWidth(160)
+        self._render_btn.setStyleSheet("font-weight: bold; font-size: 13px; background-color: #0078d4; color: white;")
         self._render_btn.clicked.connect(self._start_render)
         hbox.addWidget(self._render_btn)
 
@@ -513,7 +578,7 @@ class BatchWindow(QMainWindow):
         self._current_label.setStyleSheet("font-size: 11px; color: #aaa;")
         row1.addWidget(self._current_label, 0)
         self._job_progress = QProgressBar()
-        self._job_progress.setFixedHeight(16)
+        self._job_progress.setFixedHeight(15)
         self._job_progress.setTextVisible(True)
         row1.addWidget(self._job_progress, 1)
         prog_col.addLayout(row1)
@@ -523,13 +588,78 @@ class BatchWindow(QMainWindow):
         self._overall_label.setStyleSheet("font-size: 11px; color: #aaa;")
         row2.addWidget(self._overall_label, 0)
         self._overall_progress = QProgressBar()
-        self._overall_progress.setFixedHeight(16)
+        self._overall_progress.setFixedHeight(15)
         self._overall_progress.setTextVisible(True)
         row2.addWidget(self._overall_progress, 1)
         prog_col.addLayout(row2)
 
         hbox.addLayout(prog_col, 1)
         return bar
+
+    # ================================================================
+    #  TEMPLATE HANDLING
+    # ================================================================
+
+    def _populate_templates(self):
+        self._template_combo.blockSignals(True)
+        self._template_combo.clear()
+        templates = available_templates()
+        selected_idx = 0
+        for i, (game_id, display_name) in enumerate(templates):
+            self._template_combo.addItem(display_name, game_id)
+            if game_id.lower() == self._game.lower():
+                selected_idx = i
+        self._template_combo.setCurrentIndex(selected_idx)
+        self._template_combo.blockSignals(False)
+
+    def _on_template_selected(self, index: int):
+        if index < 0:
+            return
+        game_id = self._template_combo.currentData()
+        if not game_id:
+            return
+        self._load_active_template(game_id)
+        self._cache_template_assets()
+        self._update_template_info_label()
+
+        # Update default export paths for jobs that haven't rendered
+        for job in self._jobs:
+            if job.status == "ready":
+                job.output_path = job.video_path.parent / "exports" / f"{job.video_path.stem}_{self._game}_short.mp4"
+
+        # Redraw preview if we have an active frame
+        if self._current_frame is not None:
+            self._display_render_preview(self._current_frame)
+
+    def _update_template_info_label(self):
+        layers = self._config.get("layers", {})
+        vid_count = sum(1 for l in layers.values() if l.get("kind") == "video" and l.get("visible", True))
+        img_count = sum(1 for l in layers.values() if l.get("kind") == "image" and l.get("visible", True))
+        self._template_info_lbl.setText(
+            f"Active: {self._config.get('name', self._game)}  •  {vid_count} video layers, {img_count} graphics"
+        )
+
+    def _cache_template_assets(self):
+        """Pre-decode and cache static image layers to keep 9:16 preview fast."""
+        self._cached_image_layers.clear()
+        layers = self._config.get("layers", {})
+        for name, layer in sorted(layers.items(), key=lambda p: p[1].get("z", 0)):
+            if layer.get("kind") == "image" and layer.get("visible", True):
+                asset_path = resolve_asset(self._config_path, layer.get("asset", ""))
+                if not asset_path.is_file():
+                    continue
+                try:
+                    pil_img = Image.open(asset_path).convert("RGBA")
+                    bbox = pil_img.getchannel("A").getbbox()
+                    if bbox and bbox != (0, 0, pil_img.width, pil_img.height):
+                        pil_img = pil_img.crop(bbox)
+                    self._cached_image_layers.append({
+                        "name": name,
+                        "layer": layer,
+                        "pil_img": pil_img,
+                    })
+                except Exception:
+                    pass
 
     # ================================================================
     #  JOB MANAGEMENT
@@ -545,7 +675,6 @@ class BatchWindow(QMainWindow):
             self._add_paths([Path(p) for p in paths])
 
     def _add_paths(self, paths: list[Path]):
-        """Probe videos and add them as jobs to the queue."""
         added, errors = 0, []
         self.setCursor(Qt.WaitCursor)
         try:
@@ -554,7 +683,7 @@ class BatchWindow(QMainWindow):
                 if p.suffix.lower() not in VIDEO_EXTENSIONS:
                     continue
                 if any(j.video_path == p for j in self._jobs):
-                    continue  # skip duplicates
+                    continue
                 try:
                     info = probe_video(p)
                 except Exception as exc:
@@ -586,7 +715,6 @@ class BatchWindow(QMainWindow):
             self._job_list.setCurrentRow(len(self._jobs) - added)
 
     def _sync_list_item(self, index: int):
-        """Create or update the QListWidgetItem text and colour for *index*."""
         job = self._jobs[index]
         text = (
             f"{job.status_icon()}  {job.display_name}\n"
@@ -602,7 +730,7 @@ class BatchWindow(QMainWindow):
             item.setText(text)
         else:
             item = QListWidgetItem(text)
-            item.setSizeHint(QSize(0, 76))
+            item.setSizeHint(QSize(0, 74))
             self._job_list.addItem(item)
 
         palette = {
@@ -622,6 +750,8 @@ class BatchWindow(QMainWindow):
             self._active_index = -1
             self._frame_label.setPixmap(QPixmap())
             self._frame_label.setText("Select a clip from the queue")
+            self._render_preview_label.setPixmap(QPixmap())
+            self._render_preview_label.setText("9:16 Vertical Output Preview")
         self._jobs.pop(row)
         self._job_list.takeItem(row)
         if self._active_index > row:
@@ -642,11 +772,13 @@ class BatchWindow(QMainWindow):
         self._job_list.clear()
         self._active_index = -1
         self._frame_label.setPixmap(QPixmap())
-        self._frame_label.setText("Select a clip from the queue\nor click  '+ Add Videos'")
+        self._frame_label.setText("Select a clip from the queue\nor drag & drop videos here")
+        self._render_preview_label.setPixmap(QPixmap())
+        self._render_preview_label.setText("9:16 Vertical Output Preview")
         self._update_buttons()
 
     # ================================================================
-    #  VIDEO PREVIEW
+    #  VIDEO PREVIEW & 9:16 LIVE COMPOSITION
     # ================================================================
 
     def _on_job_selected(self, row: int):
@@ -663,7 +795,6 @@ class BatchWindow(QMainWindow):
             return
         self._capture = cap
 
-        # Sync spin boxes (without firing signals)
         self._in_spin.blockSignals(True)
         self._out_spin.blockSignals(True)
         self._in_spin.setRange(0, job.duration)
@@ -694,17 +825,93 @@ class BatchWindow(QMainWindow):
         if ok and frame is not None:
             self._current_frame = frame
             self._display_frame(frame)
+            self._display_render_preview(frame)
         self._timeline.set_position(t)
         self._time_label.setText(f"{_fmt_time(t)} / {_fmt_time(job.duration)}")
 
     def _display_frame(self, frame: np.ndarray):
-        """Convert BGR frame → scaled QPixmap and show in the preview label."""
+        """Displays source 16:9 gameplay frame."""
         qimg = to_qimage_array(frame)
         pixmap = QPixmap.fromImage(qimg)
         scaled = pixmap.scaled(
             self._frame_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation,
         )
         self._frame_label.setPixmap(scaled)
+
+    def _display_render_preview(self, frame: np.ndarray):
+        """Composes and renders the live 9:16 vertical short layout preview."""
+        pw = max(180, min(360, self._render_preview_label.width()))
+        ph = max(320, int(round(pw * 16 / 9)))
+        if ph > self._render_preview_label.height():
+            ph = max(320, self._render_preview_label.height() - 8)
+            pw = int(round(ph * 9 / 16))
+
+        # 1. Render blurred background
+        comp = render_background(frame, pw, ph, self._config)
+
+        # 2. Render video layers in z-order
+        layers = self._config.get("layers", {})
+        for name, layer in sorted(layers.items(), key=lambda p: p[1].get("z", 0)):
+            if layer.get("kind") == "video" and name != "background" and layer.get("visible", True):
+                rect = layer.get("rect", [0, 0, 1, 1])
+                x = int(round(float(rect[0]) * pw))
+                y = int(round(float(rect[1]) * ph))
+                w = max(2, int(round(float(rect[2]) * pw)))
+                h = max(2, int(round(float(rect[3]) * ph)))
+
+                crop = layer.get("crop", [0, 0, 1, 1])
+                cropped = normalized_crop(frame, crop)
+                fit = layer.get("fit", "cover")
+                layer_img = fit_contain(cropped, w, h) if fit == "contain" else fit_cover(cropped, w, h)
+
+                opacity = float(layer.get("opacity", 1.0))
+                # Alpha blend into composition
+                x0, y0 = max(0, x), max(0, y)
+                x1, y1 = min(pw, x + w), min(ph, y + h)
+                src_x0 = x0 - x
+                src_y0 = y0 - y
+                src_w = x1 - x0
+                src_h = y1 - y0
+
+                if src_w > 0 and src_h > 0:
+                    roi = comp[y0:y1, x0:x1]
+                    sub = layer_img[src_y0:src_y0 + src_h, src_x0:src_x0 + src_w]
+                    if opacity < 0.99:
+                        comp[y0:y1, x0:x1] = cv2.addWeighted(sub, opacity, roi, 1.0 - opacity, 0)
+                    else:
+                        comp[y0:y1, x0:x1] = sub
+
+        # Convert to QImage for PIL alpha rendering of logos/text
+        qimg = to_qimage_array(comp)
+        pix = QPixmap.fromImage(qimg)
+
+        # 3. Draw static image layers on QPainter with high quality
+        if self._cached_image_layers:
+            painter = QPainter(pix)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            for item in self._cached_image_layers:
+                layer = item["layer"]
+                pil_img: Image.Image = item["pil_img"]
+                rect = layer.get("rect", [0, 0, 0.1, 0.1])
+                x = int(round(float(rect[0]) * pw))
+                y = int(round(float(rect[1]) * ph))
+                w = max(2, int(round(float(rect[2]) * pw)))
+                h = max(2, int(round(float(rect[3]) * ph)))
+
+                if layer.get("fit", "fill") == "contain":
+                    cw, ch = contain_fit(pil_img.width, pil_img.height, w, h)
+                    x += (w - cw) // 2
+                    y += (h - ch) // 2
+                    w, h = cw, ch
+
+                resized_pil = pil_img.resize((w, h), Image.Resampling.LANCZOS)
+                layer_qimg = to_qimage_array(np.array(resized_pil))
+                opacity = float(layer.get("opacity", 1.0))
+                painter.setOpacity(opacity)
+                painter.drawImage(x, y, layer_qimg)
+            painter.end()
+
+        self._render_preview_label.setPixmap(pix)
 
     def _playhead_time(self) -> float:
         if self._capture is None:
@@ -741,10 +948,11 @@ class BatchWindow(QMainWindow):
         ok, frame = self._capture.read()
         t = self._capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
         if not ok or t >= job.out_time:
-            self._seek_to(job.in_time)  # loop
+            self._seek_to(job.in_time)  # loop back to IN
             return
         self._current_frame = frame
         self._display_frame(frame)
+        self._display_render_preview(frame)
         self._timeline.set_position(t)
         self._time_label.setText(f"{_fmt_time(t)} / {_fmt_time(job.duration)}")
 
@@ -837,6 +1045,7 @@ class BatchWindow(QMainWindow):
         self._add_btn.setEnabled(False)
         self._remove_btn.setEnabled(False)
         self._clear_btn.setEnabled(False)
+        self._template_combo.setEnabled(False)
         self._job_progress.setValue(0)
         self._overall_progress.setRange(0, len(renderable))
         self._overall_progress.setValue(0)
@@ -879,6 +1088,7 @@ class BatchWindow(QMainWindow):
         self._add_btn.setEnabled(True)
         self._remove_btn.setEnabled(True)
         self._clear_btn.setEnabled(True)
+        self._template_combo.setEnabled(True)
         self._current_label.setText("")
         self._render_worker = None
         self._update_buttons()
@@ -901,7 +1111,6 @@ class BatchWindow(QMainWindow):
     # ================================================================
 
     def keyPressEvent(self, event: QKeyEvent):
-        # Let spin boxes handle their own keys
         if isinstance(QApplication.focusWidget(), QDoubleSpinBox):
             return super().keyPressEvent(event)
 
@@ -976,6 +1185,7 @@ class BatchWindow(QMainWindow):
         super().resizeEvent(event)
         if self._current_frame is not None:
             self._display_frame(self._current_frame)
+            self._display_render_preview(self._current_frame)
 
     def closeEvent(self, event):
         self._stop_play()
@@ -998,4 +1208,3 @@ def launch_batch_gui(game: str | None = None, config_path: str | None = None) ->
     window = BatchWindow(game, config_path)
     window.show()
     return app.exec()
-
