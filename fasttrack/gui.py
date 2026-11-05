@@ -12,7 +12,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QSizeF, QRectF, QPointF, QEvent
 from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath, QFont
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QMenu,
     QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QProgressBar, QScrollArea, QSlider, QSpinBox, QSplitter, QStatusBar,
@@ -952,6 +952,11 @@ class FasTrackWindow(QMainWindow):
         self.browse_button = QPushButton("Browse…")
         self.browse_button.clicked.connect(self.browse_video)
         file_row.addWidget(self.browse_button)
+        self.recent_button = QPushButton("Recent ▾")
+        self.recent_button.setToolTip("Quickly open recently used video files")
+        self.recent_button.setMaximumWidth(80)
+        self.recent_button.clicked.connect(self._show_recent_menu)
+        file_row.addWidget(self.recent_button)
         self.game_combo = QComboBox()
         for template_id, template_name in available_templates():
             self.game_combo.addItem(template_name, template_id)
@@ -1348,6 +1353,7 @@ class FasTrackWindow(QMainWindow):
         self.video_info = info
         self.video_edit.setText(self.video_path)
         self._remember_source_dir(path.parent)
+        self._remember_recent_file(path)
         duration = float(info["duration"])
         self.in_spin.blockSignals(True)
         self.out_spin.blockSignals(True)
@@ -1373,6 +1379,57 @@ class FasTrackWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Loaded {path.name} · {info['width']}×{info['height']} · {info['fps']:.2f} fps · {duration:.2f}s"
         )
+
+    def _remember_recent_file(self, video_path: Path) -> None:
+        """Persist video path in the recent files list (top 10)."""
+        resolved_str = str(video_path.resolve())
+        try:
+            state = load_state()
+            recent: list[str] = state.get("recent_files", [])
+            # Remove if already exists to bump to front
+            if resolved_str in recent:
+                recent.remove(resolved_str)
+            recent.insert(0, resolved_str)
+            # Keep at most 10 recent files
+            state["recent_files"] = recent[:10]
+            save_state(state)
+        except OSError:
+            pass
+
+    def _show_recent_menu(self) -> None:
+        """Show dropdown popup menu of recent files under the Recent button."""
+        state = load_state()
+        recent_files: list[str] = state.get("recent_files", [])
+        menu = QMenu(self)
+
+        valid_count = 0
+        for f_str in recent_files:
+            f_path = Path(f_str)
+            if not f_path.is_file():
+                continue
+            valid_count += 1
+            action = menu.addAction(f_path.name)
+            action.setToolTip(f_str)
+            action.triggered.connect(lambda checked=False, p=f_str: self.load_video(p))
+
+        if valid_count == 0:
+            empty_action = menu.addAction("No recent files")
+            empty_action.setEnabled(False)
+        else:
+            menu.addSeparator()
+            clear_action = menu.addAction("Clear Recent Files")
+            clear_action.triggered.connect(self._clear_recent_files)
+
+        menu.exec(self.recent_button.mapToGlobal(QPointF(0, self.recent_button.height()).toPoint()))
+
+    def _clear_recent_files(self) -> None:
+        try:
+            state = load_state()
+            state["recent_files"] = []
+            save_state(state)
+            self.statusBar().showMessage("Recent files cleared")
+        except OSError:
+            pass
 
     def _remember_source_dir(self, directory: Path) -> None:
         """Persist the folder of the last opened recording for the next session."""
