@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable, Any
 
+from PIL import Image as PILImage
+
 from .config import contain_fit, image_content_info, resolve_asset
+from .preview import render_text_image
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -138,48 +143,82 @@ def build_filter_complex(
         parts.append(f"[{current}][{label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
         current = next_label
 
-    image_inputs: list[Path] = []
+    overlay_inputs: list[Path] = []
     input_index = 1
-    image_names = [
+    overlay_names = [
         name for name, layer in sorted(layers.items(), key=lambda pair: pair[1].get("z", 0))
-        if layer.get("kind") == "image" and layer.get("visible", True)
+        if layer.get("kind") in ("image", "text") and layer.get("visible", True)
     ]
-    # Image inputs are added after the source clip, in exactly this order by build_ffmpeg_command.
-    for image_number, name in enumerate(image_names):
+    # Overlay inputs (images, rendered text) are added after the source clip
+    for overlay_number, name in enumerate(overlay_names):
         layer = layers[name]
-        asset = resolve_asset(config_path, layer.get("asset", ""))
-        if not asset.is_file():
-            raise FileNotFoundError(f"Asset for layer '{name}' not found: {asset}")
-        image_inputs.append(asset)
+        kind = layer.get("kind")
         x, y, w, h = _rect_pixels(layer.get("rect", [0, 0, 0.1, 0.1]), out_w, out_h)
         opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
-        # Transparent padding is trimmed so the visible content defines shape and aspect.
-        native_w, native_h, bbox = image_content_info(asset)
-        source_w, source_h = native_w, native_h
-        trim = ""
-        if bbox is not None and tuple(bbox) != (0, 0, native_w, native_h):
-            source_w, source_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            trim = f"crop={source_w}:{source_h}:{bbox[0]}:{bbox[1]},"
-        if layer.get("fit", "fill") == "contain":
-            # Opt-in: keep the asset's original aspect ratio, centered inside the rectangle.
-            draw_w, draw_h = contain_fit(source_w, source_h, w, h)
-            draw_x = x + (w - draw_w) // 2
-            draw_y = y + (h - draw_h) // 2
-        else:
-            # Free transform: the picture fills its rectangle exactly, as arranged in the editor.
-            draw_w, draw_h, draw_x, draw_y = w, h, x, y
-        image_label = f"img_{name}"
-        parts.append(
-            f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"
-            f"colorchannelmixer=aa={opacity:.4f}[{image_label}]"
-        )
-        next_label = f"comp_img{image_number}"
-        parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
-        current = next_label
-        input_index += 1
+        if kind == "image":
+            asset = resolve_asset(config_path, layer.get("asset", ""))
+            if not asset.is_file():
+                raise FileNotFoundError(f"Asset for layer '{name}' not found: {asset}")
+            overlay_inputs.append(asset)
+            # Transparent padding is trimmed so the visible content defines shape and aspect.
+            native_w, native_h, bbox = image_content_info(asset)
+            source_w, source_h = native_w, native_h
+            trim = ""
+            if bbox is not None and tuple(bbox) != (0, 0, native_w, native_h):
+                source_w, source_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                trim = f"crop={source_w}:{source_h}:{bbox[0]}:{bbox[1]},"
+            if layer.get("fit", "fill") == "contain":
+                # Opt-in: keep the asset's original aspect ratio, centered inside the rectangle.
+                draw_w, draw_h = contain_fit(source_w, source_h, w, h)
+                draw_x = x + (w - draw_w) // 2
+                draw_y = y + (h - draw_h) // 2
+            else:
+                # Free transform: the picture fills its rectangle exactly, as arranged in the editor.
+                draw_w, draw_h, draw_x, draw_y = w, h, x, y
+            image_label = f"img_{name}"
+            parts.append(
+                f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"
+                f"colorchannelmixer=aa={opacity:.4f}[{image_label}]"
+            )
+            next_label = f"comp_ovr{overlay_number}"
+            parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
+            current = next_label
+            input_index += 1
+        elif kind == "text":
+            text = str(layer.get("text", "Text Layer"))
+            font_family = str(layer.get("font", "Arial"))
+            font_size = int(layer.get("font_size", 48))
+            bold = bool(layer.get("bold", True))
+            color = str(layer.get("color", "#FFFFFF"))
+            stroke_color = str(layer.get("stroke_color", "#000000"))
+            stroke_width = int(layer.get("stroke_width", 3))
+            align = str(layer.get("align", "center"))
+            img_arr = render_text_image(
+                text, w, h,
+                font_family=font_family,
+                font_size=font_size,
+                bold=bold,
+                color=color,
+                stroke_color=stroke_color,
+                stroke_width=stroke_width,
+                align=align,
+                canvas_w=out_w,
+            )
+            temp_path = Path(tempfile.gettempdir()) / f"fasttrack_txt_{name}_{os.getpid()}.png"
+            PILImage.fromarray(img_arr).save(temp_path)
+            overlay_inputs.append(temp_path)
+            text_label = f"txt_{name}"
+            parts.append(
+                f"[{input_index}:v]format=rgba,scale={w}:{h},"
+                f"colorchannelmixer=aa={opacity:.4f}[{text_label}]"
+            )
+            next_label = f"comp_ovr{overlay_number}"
+            parts.append(f"[{current}][{text_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
+            current = next_label
+            input_index += 1
 
     parts.append(f"[{current}]format=yuv420p[outv]")
-    return ";".join(parts), image_inputs
+    return ";".join(parts), overlay_inputs
 
 
 def build_ffmpeg_command(
@@ -278,18 +317,25 @@ def run_render(
         stderr = process.stderr.read() if process.stderr else ""
         return process.wait(), stderr
 
-    code, error = launch(command)
-    if code != 0 and active_encoder == "auto" and "h264_nvenc" in command:
+    try:
+        code, error = launch(command)
+        if code != 0 and active_encoder == "auto" and "h264_nvenc" in command:
+            if progress:
+                progress(0.0, "NVENC unavailable; retrying with CPU encoding…")
+            cpu_command, _ = build_ffmpeg_command(
+                video_path, output_path, start, end, config, config_path, "cpu"
+            )
+            code, error = launch(cpu_command)
+        if code != 0:
+            raise RuntimeError(error.strip() or f"FFmpeg exited with code {code}")
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg reported success but no output video was created")
         if progress:
-            progress(0.0, "NVENC unavailable; retrying with CPU encoding…")
-        cpu_command, _ = build_ffmpeg_command(
-            video_path, output_path, start, end, config, config_path, "cpu"
-        )
-        code, error = launch(cpu_command)
-    if code != 0:
-        raise RuntimeError(error.strip() or f"FFmpeg exited with code {code}")
-    if not output_path.is_file() or output_path.stat().st_size == 0:
-        raise RuntimeError("FFmpeg reported success but no output video was created")
-    if progress:
-        progress(100.0, "Render complete")
-    return output_path
+            progress(100.0, "Render complete")
+        return output_path
+    finally:
+        for p in Path(tempfile.gettempdir()).glob(f"fasttrack_txt_*_{os.getpid()}.png"):
+            try:
+                p.unlink()
+            except OSError:
+                pass

@@ -9,14 +9,15 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QSizeF, QRectF, QPointF, QEvent
-from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath, QFont
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QSizeF, QRectF, QPointF, QEvent, QPoint
+from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath, QFont, QAction
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QMenu,
     QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
     QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
     QPushButton, QProgressBar, QScrollArea, QSlider, QSpinBox, QSplitter, QStatusBar,
     QVBoxLayout, QWidget, QListWidget, QListWidgetItem, QAbstractItemView,
+    QToolBar, QColorDialog, QSizePolicy,
 )
 
 from .assets import ensure_assets
@@ -421,6 +422,8 @@ class LayerStackWidget(QWidget):
     layer_selected = Signal(str)
     visibility_toggled = Signal(str, bool)
     reordered = Signal(list)  # list of layer names in top-to-bottom order
+    add_text_requested = Signal()
+    delete_layer_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -442,26 +445,45 @@ class LayerStackWidget(QWidget):
         self.list_widget.model().rowsMoved.connect(self._on_rows_moved)
         layout.addWidget(self.list_widget)
 
-        # Move Up / Down helper buttons
+        # Move Up / Down helper buttons, Add Text, Delete
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
-        self.up_button = QPushButton("▲ Bring Forward")
+        self.up_button = QPushButton("▲ Forward")
         self.up_button.setFixedHeight(24)
         self.up_button.setStyleSheet("font-size: 11px;")
         self.up_button.setToolTip("Move layer up in stack (closer to front)")
         self.up_button.clicked.connect(self.move_selected_up)
         btn_row.addWidget(self.up_button)
 
-        self.down_button = QPushButton("▼ Send Backward")
+        self.down_button = QPushButton("▼ Backward")
         self.down_button.setFixedHeight(24)
         self.down_button.setStyleSheet("font-size: 11px;")
         self.down_button.setToolTip("Move layer down in stack (closer to back)")
         self.down_button.clicked.connect(self.move_selected_down)
         btn_row.addWidget(self.down_button)
+
+        self.add_text_button = QPushButton("＋ Text")
+        self.add_text_button.setFixedHeight(24)
+        self.add_text_button.setStyleSheet("font-size: 11px; font-weight: bold; color: #e5c07b;")
+        self.add_text_button.setToolTip("Add a new editable text layer to this template")
+        self.add_text_button.clicked.connect(self.add_text_requested.emit)
+        btn_row.addWidget(self.add_text_button)
+
+        self.delete_button = QPushButton("🗑")
+        self.delete_button.setFixedSize(24, 24)
+        self.delete_button.setStyleSheet("font-size: 11px;")
+        self.delete_button.setToolTip("Delete selected layer")
+        self.delete_button.clicked.connect(self._on_delete_clicked)
+        btn_row.addWidget(self.delete_button)
         layout.addLayout(btn_row)
 
         self._updating = False
         self._layers_cache: dict[str, Any] = {}
+
+    def _on_delete_clicked(self) -> None:
+        name = self.current_layer_name()
+        if name and name not in ("background", "main"):
+            self.delete_layer_requested.emit(name)
 
     def _create_item_widget(self, name: str, layer: dict[str, Any]) -> QWidget:
         widget = QWidget()
@@ -484,8 +506,17 @@ class LayerStackWidget(QWidget):
 
         # Clean text-based type indicator
         kind = layer.get("kind", "video")
-        kind_lbl = QLabel("[VID]" if kind == "video" else "[IMG]")
-        kind_lbl.setStyleSheet("color: #78a0c8; font-size: 10px; font-weight: bold;")
+        if kind == "video":
+            badge_text = "[VID]"
+            badge_color = "#78a0c8"
+        elif kind == "text":
+            badge_text = "[TXT]"
+            badge_color = "#e5c07b"
+        else:
+            badge_text = "[IMG]"
+            badge_color = "#98c379"
+        kind_lbl = QLabel(badge_text)
+        kind_lbl.setStyleSheet(f"color: {badge_color}; font-size: 10px; font-weight: bold;")
         kind_lbl.setFixedWidth(30)
         w_layout.addWidget(kind_lbl)
 
@@ -543,6 +574,8 @@ class LayerStackWidget(QWidget):
         if self._updating:
             return
         name = self.current_layer_name()
+        if hasattr(self, "delete_button"):
+            self.delete_button.setEnabled(bool(name and name not in ("background", "main")))
         if name:
             self.layer_selected.emit(name)
 
@@ -861,6 +894,13 @@ class VisualSourceCropDialog(QDialog):
             self.on_crop_applied([cx, cy, cw, ch])
         self.accept()
 
+def _format_token_time(seconds: float) -> str:
+    s = max(0, int(round(seconds)))
+    if s >= 60:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s}s"
+
+
 class FasTrackWindow(QMainWindow):
     def __init__(self, video_path: str | None, game: str | None = None, config_path: str | Path | None = None):
         super().__init__()
@@ -907,6 +947,7 @@ class FasTrackWindow(QMainWindow):
         self._undo_commit_timer = QTimer(self)
         self._undo_commit_timer.setSingleShot(True)
         self._undo_commit_timer.timeout.connect(self._commit_pending_undo)
+        self._updating_text_fields = False
         self._build_ui()
         undo_shortcut = QShortcut(QKeySequence.StandardKey.Undo, self)
         undo_shortcut.activated.connect(self.undo)
@@ -1043,6 +1084,8 @@ class FasTrackWindow(QMainWindow):
             spin.setSuffix(" s")
         self.in_spin.valueChanged.connect(self._validate_trim)
         self.out_spin.valueChanged.connect(self._validate_trim)
+        self.in_spin.valueChanged.connect(self._on_in_out_changed)
+        self.out_spin.valueChanged.connect(self._on_in_out_changed)
         trim_form.addRow("IN point", self.in_spin)
         trim_form.addRow("OUT point", self.out_spin)
         trim_layout.addLayout(trim_form)
@@ -1093,6 +1136,32 @@ class FasTrackWindow(QMainWindow):
         output_browse.clicked.connect(self.browse_output)
         output_row.addWidget(output_browse)
         render_layout.addLayout(output_row)
+
+        pattern_row = QHBoxLayout()
+        pattern_row.addWidget(QLabel("Pattern:"))
+        self.pattern_combo = QComboBox()
+        self.pattern_combo.setEditable(True)
+        self.pattern_combo.setToolTip(
+            "Tokens: {clip}, {game}, {in}, {out}, {dur}, {date}, {time}, {res}\n"
+            "Example: {clip}_{game}_{in}-{out}"
+        )
+        self.pattern_combo.addItems([
+            "{clip}_{game}_{in}-{out}",
+            "{clip}_{game}_short",
+            "{game}_{date}_{in}-{out}",
+            "{clip}_short",
+        ])
+        state = load_state()
+        saved_pat = state.get("output_pattern", "{clip}_{game}_{in}-{out}")
+        self.pattern_combo.setEditText(saved_pat)
+        self.pattern_combo.currentTextChanged.connect(self._on_pattern_changed)
+        pattern_row.addWidget(self.pattern_combo, 1)
+        self.refresh_name_btn = QPushButton("↻")
+        self.refresh_name_btn.setToolTip("Regenerate filename from pattern")
+        self.refresh_name_btn.setFixedWidth(28)
+        self.refresh_name_btn.clicked.connect(self._update_output_path)
+        pattern_row.addWidget(self.refresh_name_btn)
+        render_layout.addLayout(pattern_row)
         render_form = QFormLayout()
         self.render_preset_combo = QComboBox()
         self.render_preset_combo.addItem("Custom", "")
@@ -1190,6 +1259,8 @@ class FasTrackWindow(QMainWindow):
         self.layer_stack.layer_selected.connect(self._on_stack_layer_selected)
         self.layer_stack.visibility_toggled.connect(self._on_stack_visibility_toggled)
         self.layer_stack.reordered.connect(self._on_stack_reordered)
+        self.layer_stack.add_text_requested.connect(self._add_text_layer)
+        self.layer_stack.delete_layer_requested.connect(self._delete_layer)
         layer_layout.addWidget(self.layer_stack)
         vis_opacity_row = QHBoxLayout()
         self.visible_check = QCheckBox("Visible")
@@ -1209,6 +1280,66 @@ class FasTrackWindow(QMainWindow):
         self.opacity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         vis_opacity_row.addWidget(self.opacity_label)
         layer_layout.addLayout(vis_opacity_row)
+
+        # -- Text Properties (#17) ---------------------------------------------
+        self.text_group = QGroupBox("Text properties")
+        text_layout = QVBoxLayout(self.text_group)
+        text_layout.setContentsMargins(6, 4, 6, 6)
+        text_layout.setSpacing(5)
+
+        self.text_content_edit = QLineEdit()
+        self.text_content_edit.setPlaceholderText("Enter text…")
+        self.text_content_edit.textEdited.connect(self._on_text_content_edited)
+        self.text_content_edit.editingFinished.connect(self._commit_pending_undo)
+        text_layout.addWidget(self.text_content_edit)
+
+        font_row = QHBoxLayout()
+        self.font_combo = QComboBox()
+        self.font_combo.addItems([
+            "Impact", "Arial", "Segoe UI", "Calibri", "Verdana",
+            "Tahoma", "Trebuchet MS", "Comic Sans MS", "Times New Roman", "Courier New"
+        ])
+        self.font_combo.currentIndexChanged.connect(self._on_text_prop_changed)
+        font_row.addWidget(self.font_combo, 1)
+
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 300)
+        self.font_size_spin.setValue(48)
+        self.font_size_spin.setSuffix(" pt")
+        self.font_size_spin.valueChanged.connect(self._on_text_prop_changed)
+        font_row.addWidget(self.font_size_spin)
+
+        self.font_bold_check = QCheckBox("Bold")
+        self.font_bold_check.setChecked(True)
+        self.font_bold_check.stateChanged.connect(self._on_text_prop_changed)
+        font_row.addWidget(self.font_bold_check)
+        text_layout.addLayout(font_row)
+
+        style_row = QHBoxLayout()
+        self.text_color_btn = QPushButton("Color")
+        self.text_color_btn.setFixedHeight(24)
+        self.text_color_btn.clicked.connect(self._choose_text_color)
+        style_row.addWidget(self.text_color_btn)
+
+        self.stroke_color_btn = QPushButton("Stroke")
+        self.stroke_color_btn.setFixedHeight(24)
+        self.stroke_color_btn.clicked.connect(self._choose_stroke_color)
+        style_row.addWidget(self.stroke_color_btn)
+
+        self.stroke_width_spin = QSpinBox()
+        self.stroke_width_spin.setRange(0, 30)
+        self.stroke_width_spin.setValue(3)
+        self.stroke_width_spin.setSuffix(" px")
+        self.stroke_width_spin.valueChanged.connect(self._on_text_prop_changed)
+        style_row.addWidget(self.stroke_width_spin)
+
+        self.text_align_combo = QComboBox()
+        self.text_align_combo.addItems(["Center", "Left", "Right"])
+        self.text_align_combo.currentIndexChanged.connect(self._on_text_prop_changed)
+        style_row.addWidget(self.text_align_combo)
+        text_layout.addLayout(style_row)
+
+        layer_layout.addWidget(self.text_group)
 
         self.asset_group = QGroupBox("Image asset")
         asset_layout = QHBoxLayout(self.asset_group)
@@ -1269,9 +1400,6 @@ class FasTrackWindow(QMainWindow):
         crop_btn_row.addWidget(self.reset_crop_button)
         layer_layout.addWidget(crop_group)
         layer_layout.addLayout(crop_btn_row)
-        self.reset_crop_button.setToolTip("Reset source crop to config defaults")
-        self.reset_crop_button.clicked.connect(self.reset_crop_to_default)
-        layer_layout.addWidget(self.reset_crop_button)
         layout.addWidget(layer_group)
 
         actions_group = QGroupBox("Template")
@@ -1365,8 +1493,7 @@ class FasTrackWindow(QMainWindow):
         self.out_spin.blockSignals(False)
         self.playhead = 0
         self.position_slider.setValue(0)
-        output = path.parent / "exports" / f"{path.stem}_{self.game}_short.mp4"
-        self.output_edit.setText(str(output))
+        self._update_output_path()
         if self._playing:
             self._stop_playback()
         self._frame_index = 0
@@ -1765,6 +1892,27 @@ class FasTrackWindow(QMainWindow):
         self.asset_edit.setText(str(layer.get("asset", "")) if is_image else "")
         self.snap_aspect_button.setEnabled(is_image)
 
+        is_text = layer.get("kind") == "text"
+        if hasattr(self, "text_group"):
+            self.text_group.setVisible(is_text)
+            if is_text:
+                self._updating_text_fields = True
+                self.text_content_edit.setText(str(layer.get("text", "Text Layer")))
+                font_fam = str(layer.get("font", "Impact"))
+                idx = self.font_combo.findText(font_fam, Qt.MatchFlag.MatchFixedString)
+                if idx >= 0:
+                    self.font_combo.setCurrentIndex(idx)
+                self.font_size_spin.setValue(int(layer.get("font_size", 48)))
+                self.font_bold_check.setChecked(bool(layer.get("bold", True)))
+                self.stroke_width_spin.setValue(int(layer.get("stroke_width", 3)))
+                align_str = str(layer.get("align", "center")).title()
+                a_idx = self.text_align_combo.findText(align_str)
+                if a_idx >= 0:
+                    self.text_align_combo.setCurrentIndex(a_idx)
+                self._style_color_btn(self.text_color_btn, str(layer.get("color", "#FFFFFF")), "Color")
+                self._style_color_btn(self.stroke_color_btn, str(layer.get("stroke_color", "#000000")), "Stroke")
+                self._updating_text_fields = False
+
     def browse_asset(self):
         name = self._active_layer_name()
         layer = self.config["layers"].get(name, {})
@@ -2015,9 +2163,7 @@ class FasTrackWindow(QMainWindow):
         self.setWindowTitle(f"FasTrack Video Editor — {self.template_name}")
         self._remember_template(game_id)
         self._rebuild_layer_combo()
-        if self.video_path:
-            video = Path(self.video_path)
-            self.output_edit.setText(str(video.parent / "exports" / f"{video.stem}_{game_id}_short.mp4"))
+        self._update_output_path()
         self.refresh_canvas()
         self.statusBar().showMessage(f"Switched to the {self.template_name} template")
 
@@ -2407,6 +2553,158 @@ class FasTrackWindow(QMainWindow):
         if hours:
             return f"{hours:02d}:{minutes:02d}:{secs:02d}.{millis:03d}"
         return f"{minutes:02d}:{secs:02d}.{millis:03d}"
+
+    # -- Filename Auto-Naming & Tokens (#9) ----------------------------------
+
+    def _on_pattern_changed(self, text: str) -> None:
+        try:
+            state = load_state()
+            state["output_pattern"] = text.strip()
+            save_state(state)
+        except OSError:
+            pass
+        self._update_output_path()
+
+    def _on_in_out_changed(self, _val: float) -> None:
+        self._update_output_path()
+
+    def _compute_output_filename(self, pattern: str | None = None) -> str:
+        if not pattern:
+            pattern = self.pattern_combo.currentText().strip() or "{clip}_{game}_{in}-{out}"
+        clip = Path(self.video_path).stem if self.video_path else "clip"
+        game = self.game if hasattr(self, "game") else "short"
+        in_val = self.in_spin.value() if hasattr(self, "in_spin") else 0.0
+        out_val = self.out_spin.value() if hasattr(self, "out_spin") else 0.0
+        in_str = _format_token_time(in_val)
+        out_str = _format_token_time(out_val)
+        dur_str = _format_token_time(max(0.0, out_val - in_val))
+        now = time.strftime("%Y-%m-%d")
+        now_time = time.strftime("%H%M%S")
+        canvas = self.config.get("canvas", {})
+        res_str = f"{canvas.get('width', 1080)}x{canvas.get('height', 1920)}"
+
+        name = pattern
+        name = name.replace("{clip}", clip)
+        name = name.replace("{game}", game)
+        name = name.replace("{in}", in_str)
+        name = name.replace("{out}", out_str)
+        name = name.replace("{dur}", dur_str)
+        name = name.replace("{date}", now)
+        name = name.replace("{time}", now_time)
+        name = name.replace("{res}", res_str)
+        if not name.lower().endswith(".mp4"):
+            name += ".mp4"
+        return name
+
+    def _update_output_path(self) -> None:
+        if not getattr(self, "video_path", None):
+            return
+        video_p = Path(self.video_path)
+        pattern = self.pattern_combo.currentText().strip() or "{clip}_{game}_{in}-{out}"
+        filename = self._compute_output_filename(pattern)
+        out_dir = video_p.parent / "exports"
+        self.output_edit.setText(str(out_dir / filename))
+
+
+    # -- Editable Text Layers (#17) -----------------------------------------
+
+    def _add_text_layer(self) -> None:
+        layers = self.config.get("layers", {})
+        idx = 1
+        while f"text_{idx}" in layers:
+            idx += 1
+        layer_name = f"text_{idx}"
+        max_z = max((l.get("z", 0) for l in layers.values()), default=10)
+        self._snapshot(f"Add text layer {layer_name}")
+        layers[layer_name] = {
+            "kind": "text",
+            "text": "Your Text Here",
+            "font": "Impact",
+            "font_size": 48,
+            "bold": True,
+            "color": "#FFFFFF",
+            "stroke_color": "#000000",
+            "stroke_width": 3,
+            "align": "center",
+            "rect": [0.1, 0.45, 0.8, 0.08],
+            "z": max_z + 10,
+            "opacity": 1.0,
+            "visible": True,
+        }
+        self.layer_stack.populate(self.config.get("layers", {}), layer_name)
+        self.select_layer()
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Added text layer '{layer_name}'")
+
+    def _delete_layer(self, name: str) -> None:
+        if name in ("background", "main"):
+            return
+        self._snapshot(f"Delete layer {name.replace('_', ' ')}")
+        self.config.get("layers", {}).pop(name, None)
+        self.layer_stack.populate(self.config.get("layers", {}))
+        self.select_layer()
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Deleted layer '{name}'")
+
+    def _on_text_content_edited(self, text: str) -> None:
+        name = self._active_layer_name()
+        layer = self.config.get("layers", {}).get(name, {})
+        if layer.get("kind") != "text":
+            return
+        if self._pending_undo is None:
+            self._pending_undo = (f"Edit text {name}", clone_config(self.config))
+        layer["text"] = text
+        self.refresh_canvas()
+        self._undo_commit_timer.start(800)
+
+    def _on_text_prop_changed(self) -> None:
+        if getattr(self, "_updating_text_fields", False):
+            return
+        name = self._active_layer_name()
+        layer = self.config.get("layers", {}).get(name, {})
+        if layer.get("kind") != "text":
+            return
+        self._snapshot(f"Change text styling {name}")
+        layer["font"] = self.font_combo.currentText()
+        layer["font_size"] = self.font_size_spin.value()
+        layer["bold"] = self.font_bold_check.isChecked()
+        layer["stroke_width"] = self.stroke_width_spin.value()
+        layer["align"] = self.text_align_combo.currentText().lower()
+        self.refresh_canvas()
+
+    def _choose_text_color(self) -> None:
+        name = self._active_layer_name()
+        layer = self.config.get("layers", {}).get(name, {})
+        current = QColor(layer.get("color", "#FFFFFF"))
+        color = QColorDialog.getColor(current, self, "Choose Text Color")
+        if color.isValid():
+            hex_str = color.name().upper()
+            self._snapshot(f"Text color {name}")
+            layer["color"] = hex_str
+            self._style_color_btn(self.text_color_btn, hex_str, "Color")
+            self.refresh_canvas()
+
+    def _choose_stroke_color(self) -> None:
+        name = self._active_layer_name()
+        layer = self.config.get("layers", {}).get(name, {})
+        current = QColor(layer.get("stroke_color", "#000000"))
+        color = QColorDialog.getColor(current, self, "Choose Stroke Color")
+        if color.isValid():
+            hex_str = color.name().upper()
+            self._snapshot(f"Stroke color {name}")
+            layer["stroke_color"] = hex_str
+            self._style_color_btn(self.stroke_color_btn, hex_str, "Stroke")
+            self.refresh_canvas()
+
+    def _style_color_btn(self, btn: QPushButton, hex_color: str, label: str) -> None:
+        col = QColor(hex_color)
+        lum = (0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue())
+        text_col = "#000" if lum > 140 else "#fff"
+        btn.setText(label)
+        btn.setStyleSheet(
+            f"QPushButton {{ background-color: {hex_color}; color: {text_col}; "
+            f"border: 1px solid #555; border-radius: 3px; font-weight: bold; font-size: 11px; }}"
+        )
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.KeyPress:

@@ -5,9 +5,98 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from .config import contain_fit, resolve_asset
+
+FONT_MAP: dict[str, tuple[str, str]] = {
+    "Arial": ("arial.ttf", "arialbd.ttf"),
+    "Impact": ("impact.ttf", "impact.ttf"),
+    "Segoe UI": ("segoeui.ttf", "segoeuib.ttf"),
+    "Calibri": ("calibri.ttf", "calibrib.ttf"),
+    "Verdana": ("verdana.ttf", "verdanab.ttf"),
+    "Tahoma": ("tahoma.ttf", "tahomabd.ttf"),
+    "Trebuchet MS": ("trebuc.ttf", "trebucbd.ttf"),
+    "Comic Sans MS": ("comic.ttf", "comicbd.ttf"),
+    "Times New Roman": ("times.ttf", "timesbd.ttf"),
+    "Courier New": ("cour.ttf", "courbd.ttf"),
+}
+
+
+def resolve_font(family: str, size: int, bold: bool = True) -> Any:
+    candidates: list[str] = []
+    if family in FONT_MAP:
+        regular, bold_file = FONT_MAP[family]
+        candidates.append(bold_file if bold else regular)
+        candidates.append(regular)
+    if not family.lower().endswith((".ttf", ".otf")):
+        candidates.append(f"{family}.ttf")
+    else:
+        candidates.append(family)
+    candidates.extend(["arialbd.ttf" if bold else "arial.ttf", "arial.ttf"])
+    for cand in candidates:
+        try:
+            return ImageFont.truetype(cand, size)
+        except (OSError, ValueError):
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
+
+
+def render_text_image(
+    text: str,
+    target_w: int,
+    target_h: int,
+    font_family: str = "Arial",
+    font_size: int = 48,
+    bold: bool = True,
+    color: str = "#FFFFFF",
+    stroke_color: str = "#000000",
+    stroke_width: int = 3,
+    align: str = "center",
+    canvas_w: int = 1080,
+) -> np.ndarray:
+    target_w = max(2, target_w)
+    target_h = max(2, target_h)
+    img = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    if not text:
+        return np.array(img)
+
+    scale = max(0.1, canvas_w / 1080.0)
+    actual_size = max(8, int(round(font_size * scale)))
+    actual_stroke = max(0, int(round(stroke_width * scale)))
+    font = resolve_font(font_family, actual_size, bold)
+
+    draw = ImageDraw.Draw(img)
+    try:
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=actual_stroke, align=align)
+        tw = bbox[2] - bbox[0]
+        th = bbox[3] - bbox[1]
+    except Exception:
+        bbox = (0, 0, target_w, target_h)
+        tw, th = target_w, target_h
+
+    if align == "left":
+        x = -bbox[0] + 4
+    elif align == "right":
+        x = target_w - tw - bbox[0] - 4
+    else:
+        x = (target_w - tw) // 2 - bbox[0]
+
+    y = (target_h - th) // 2 - bbox[1]
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=color,
+        stroke_width=actual_stroke,
+        stroke_fill=stroke_color,
+        align=align,
+    )
+    return np.array(img)
 
 
 def normalized_crop(frame: np.ndarray, crop: list[float]) -> np.ndarray:
@@ -95,6 +184,27 @@ def layer_preview_image(
             return np.array(image), aspect
         except (OSError, ValueError):
             return None, None
+    if kind == "text":
+        text = str(layer.get("text", "Text Layer"))
+        font_family = str(layer.get("font", "Arial"))
+        font_size = int(layer.get("font_size", 48))
+        bold = bool(layer.get("bold", True))
+        color = str(layer.get("color", "#FFFFFF"))
+        stroke_color = str(layer.get("stroke_color", "#000000"))
+        stroke_width = int(layer.get("stroke_width", 3))
+        align = str(layer.get("align", "center"))
+        img_arr = render_text_image(
+            text, target_w, target_h,
+            font_family=font_family,
+            font_size=font_size,
+            bold=bold,
+            color=color,
+            stroke_color=stroke_color,
+            stroke_width=stroke_width,
+            align=align,
+            canvas_w=canvas_w,
+        )
+        return img_arr, None
     return None, None
 
 
