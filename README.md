@@ -1,231 +1,120 @@
-# FasTrack — Gaming Shorts Editor
+# FasTrack ⚡
+### Turn 16:9 Gameplay Recordings into Viral 9:16 Vertical Shorts in Seconds.
 
-A small Windows-first editor for turning a gameplay recording into a 9:16 vertical short. The first profile is **Valorant**, based on the supplied BadPanda layout.
+![Platform](https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows)
+![Format](https://img.shields.io/badge/Output-9%3A16%20Shorts%20%2F%20TikTok%20%2F%20Reels-ff0050?style=flat-square)
+![GPU Acceleration](https://img.shields.io/badge/Render-Hardware%20Accelerated-76b900?style=flat-square&logo=nvidia)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-## What it creates
+---
 
-The same source recording is used for four moving-picture layers:
+**FasTrack** is a high-speed, creator-first video editor built specifically for gamers and streamers. Instead of spending 30 minutes keyframing and cropping inside complex editing suites like Premiere Pro or DaVinci Resolve, FasTrack turns raw horizontal gameplay into high-impact, multi-layer vertical videos with a few clicks.
 
-1. A full-frame, blurred and slightly darkened background.
-2. The large central gameplay window.
-3. A separate top-right killfeed crop.
-4. A separate lower-left chat crop.
+Drop your recording, pick your moments, align your layout, and export crisp 60fps shorts ready for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
-Transparent PNG layers add the Valorant title, YouTube/Instagram handles, and a panda channel mark. Every layer can be moved/resized independently. For the three video windows, its _output rectangle_ and its _source crop_ are both editable. Image layers can be placed and resized freely; they always start at their natural aspect ratio.
+---
 
-Default output: **1080 × 1920, 60 fps, MP4/H.264**, with the source audio retained. Rendering uses NVIDIA NVENC on a supported NVIDIA driver / FFmpeg build; `auto` falls back to CPU x264 if NVENC fails.
+## ✨ Why Creators Love FasTrack
 
-## 1. Requirements (Windows)
+* **Instant Multi-Layer Magic**: Automatically splits single 16:9 footage into an immersive blurred background, a focused center gameplay feed, and dedicated crops for your facecam, killfeed, or chat.
+* **Real-Time Visual Cropping**: No guesswork. Frame your killfeed or facecam by simply dragging an interactive box directly over the uncropped source recording.
+* **Instant Keyboard Trimming**: Edit at the speed of thought with classic NLE shuttle hotkeys (`J` `K` `L`, `Space`, `I` / `O`).
+* **Built-in Styled Text Overlays**: Add catchy captions, hook titles, or social handles directly inside the editor—complete with bold fonts, color pickers, and outline strokes.
+* **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
+* **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
+* **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 
-- Windows 10/11.
-- Python 3.11 recommended (Python 3.10+ should work).
-- FFmpeg **and ffprobe** installed and available on `PATH`.
-- For GPU rendering: a current NVIDIA driver and an FFmpeg build that includes `h264_nvenc`.
+---
 
-Check FFmpeg from PowerShell:
+## 🚀 Quick Start Guide
 
-```powershell
-ffmpeg -version
-ffmpeg -hide_banner -encoders | findstr nvenc
-ffprobe -version
-```
+Getting started takes less than two minutes:
 
-You should see `h264_nvenc` in the encoder list for NVENC support. The actual NVIDIA driver/runtime is also checked when rendering. If it cannot initialize, use `--encoder cpu` or leave the default `auto` to let FasTrack retry with CPU encoding.
+### 1. Setup
+Double-click **`install.bat`** in the project folder. It configures everything automatically.
 
-## 2. Install
+### 2. Launch
+Double-click **`run_gui.bat`** to open the main studio editor.
 
-Extract the folder, open it in Explorer, and double-click `install.bat`. Or run:
+---
 
-```powershell
-cd path\to\fasttrack-video-editor
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-If PowerShell blocks activation, you can skip activation and use `.venv\Scripts\python.exe` directly.
-
-## 3. Open the editor
-
-Double-click `run_gui.bat`, or:
-
-```powershell
-python fasttrack.py --gui
-```
-
-The **Template** dropdown lists every game in `templates/` (one JSON file per game); the editor remembers your last one. Even faster: drag a video file onto **`quick_edit.pyw`** in Explorer — the editor opens with that clip already loaded, no console window and no Browse step (double-clicking `quick_edit.pyw` opens it empty).
-
-Choose a recording with **Browse**. To open the editor with a clip already loaded:
-
-```powershell
-python fasttrack.py "D:\Clips\valorant_match.mp4" -g valorant --gui
-```
-
-Scrub the timeline to a moment you want, click **Set IN**, scrub to the end, then click **Set OUT**. You can also type precise timestamps in seconds. The editor preview updates as you scrub, and the readout shows the exact frame number.
-
-**Playback**: Play runs at real speed (sequential decoding — no seeking per frame), with a **Speed** selector from 0.25× to 4×. **◀ Frame / Frame ▶** step one frame at a time (Left/Right arrow keys too; hold **Shift** for a full second — stepping pauses playback), and **Space** toggles play/pause. **I** / **O** set the IN/OUT points from the playhead, and **J** / **K** / **L** shuttle: `L` plays forward (press again to double speed, up to 4×), `J` rewinds the same way, `K` pauses. The preview canvas is 360×640; enable **Sharp preview** above the canvas to render it at 540×960 (remembered between sessions).
-
-When a render finishes, the completion dialog shows the output filename and path and offers **Open folder** (opens Explorer with the file selected) and **Play video** (your default player).
-
-FasTrack remembers the folder of the last recording you opened (stored in `fasttrack_state.json` beside the app) and starts the file browser there next time. Opening a clip from a different folder simply updates the memory.
-
-### Layout editing
-
-- Choose a layer in the right-hand **Layer editor**.
-- Click a layer to select it (the inspector follows), then drag it anywhere in the preview to reposition it.
-- Resize with the eight grips pinned to the layer's corners and edges — one grip per corner, plus four edge grips for width/height only. Each grip keeps the opposite corner or edge anchored while you drag. The grips are real interactive handles, so they work even on PNGs that are mostly transparent. **Resize grips** above the preview toggles them off for a clean look (the choice is remembered; the position/size fields still resize layers).
-- Hold **Shift** while dragging a grip to keep the layer's current proportions. Image layers can be stretched freely otherwise; use **Snap to image aspect** in the layer editor to return to the image's natural shape at any time.
-- **Ctrl+Z** undoes any canvas or layout change (moves, resizes, crop and asset edits, visibility toggles, layout resets); **Ctrl+Shift+Z** redoes. The ↶/↷ buttons in the Template panel do the same, with up to 100 steps.
-- Use **Output position / size** to set its rectangle as percentages of the portrait canvas.
-- For `main`, `killfeed` and `chat`, use **Source crop** to choose which part of the original 16:9 footage appears in that layer. Crop values are percentages of the original video frame.
-- Toggle **Visible** to hide a layer.
-- Output position/size and source crop fields update the live preview in real time as you type or spin.
-- Click **Save layout to template** to keep your changes in the template file selected in the Template dropdown (e.g. `templates/valorant.json`).
-
-The preview is a composition preview at a smaller canvas size; the final render uses your selected output dimensions and FFmpeg filters.
-
-## 4. CLI use
-
-The simplest workflow opens the visual editor so you can pick IN/OUT and adjust the composition:
-
-```powershell
-python fasttrack.py "D:\Clips\match.mp4" -g valorant
-```
-
-Supplying both trim points renders directly without opening the GUI:
-
-```powershell
-python fasttrack.py "D:\Clips\match.mp4" -g valorant --in 00:01:12.5 --out 00:01:31 -o "D:\Clips\exports\ace.mp4"
-```
-
-Times can be seconds (`72.5`), `MM:SS` (`01:12.5`) or `HH:MM:SS.mmm`. Encoder choices:
-
-```powershell
-# Prefer NVENC, automatically retry CPU x264 if NVENC is unavailable (default)
-python fasttrack.py "D:\Clips\match.mp4" -g valorant --in 72.5 --out 91 --encoder auto
-
-# Force NVIDIA NVENC
-python fasttrack.py "D:\Clips\match.mp4" -g valorant --in 72.5 --out 91 --encoder nvenc
-
-# Force CPU x264
-python fasttrack.py "D:\Clips\match.mp4" -g valorant --in 72.5 --out 91 --encoder cpu
-```
-
-Print the exact FFmpeg command without rendering:
-
-```powershell
-python fasttrack.py "D:\Clips\match.mp4" --in 72.5 --out 91 --print-command
-```
-
-The default output location is an `exports` folder beside the input recording.
-
-## 5. Templates and adding a new game
-
-Everything about a game lives in one file: **`templates/<game>.json`**. The Template dropdown in the editor and the CLI `-g` flag both read that folder, so adding a game is just adding a file:
-
-1. Copy the closest template: `copy templates\valorant.json templates\cs2.json`.
-2. Edit it — set `"name": "CS2"` (shown in the dropdown), then adjust `layers` (positions, `crop` rectangles for the killfeed/chat windows), `background`, `branding` and asset paths for that game's HUD.
-3. Restart the editor. The new game appears in the Template dropdown and works with `-g cs2`.
-
-The editor's **Save layout to template** button writes back into the JSON of the currently selected game, so you can tune each game visually. A legacy `config.json` from before this structure is moved to `templates/valorant.json` automatically on first launch. App-level state (last source folder, last template, grip visibility) lives in `fasttrack_state.json`, separate from templates.
-
-Project layout:
+## 🎬 The 4-Step Creator Workflow
 
 ```
-Fastrack/
-├─ fasttrack.py            CLI + GUI entry point
-├─ fasttrack/              application code
-├─ templates/              one JSON per game (valorant.json, cs2.json, …)
-├─ assets/                 branding PNGs referenced by templates
-├─ quick_edit.pyw          drag & drop a video → editor opens it
-├─ install.bat             run once (creates .venv, installs dependencies)
-├─ run_gui.bat             daily driver: opens the editor
-├─ render.bat              CLI rendering helper
-└─ fasttrack_state.json    remembered UI choices (not a template)
+ 1. DROP FOOTAGE  ──►  2. TRIM THE MOMENT  ──►  3. TWEAK LAYOUT  ──►  4. EXPORT
+ Drag video in         Scrub & press I / O      Adjust crops/text        Click Render
 ```
 
-## 6. Customize assets and branding
+1. **Drop Your Footage**: Drag any recording (`.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`) straight onto the editor, or choose from your **Recent Files** list.
+2. **Trim the Action**: Scrub the timeline to your play, tap **`I`** to set your start point, tap **`O`** for your end point, and preview playback with **`Space`**.
+3. **Customize Your Look**: 
+   - Switch game templates instantly with the **Template** selector.
+   - Click **📐 Crop visually…** to frame facecams or HUD elements.
+   - Click **＋ Text** to drop in high-contrast meme titles or creator watermarks.
+4. **Export**: Click **Render Shorts**. Your video is hardware-encoded at smooth 60fps, and a completion prompt lets you jump straight to the file or play it immediately.
 
-All template values live in **`templates/<game>.json`** (e.g. `templates/valorant.json`). Paths are relative to that file unless absolute paths are used.
+---
 
-### Branding
+## 🌟 Standout Features
 
-Edit these values and restart the editor:
+### 📐 Interactive Visual Source Crop
+Forget entering manual pixel numbers. Opening the visual cropper displays the full widescreen source frame. Simply drag and scale the crop box over what matters—your facecam, minimap, inventory, or killfeed—and watch your 9:16 canvas update simultaneously.
 
-```json
-"branding": {
-  "youtube_handle": "@youryoutube",
-  "instagram_handle": "@yourinstagram",
-  "channel_name": "YOUR CHANNEL"
-}
-```
+### 🎨 Layer Stack & Direct Text Engine
+- **Visual Layer Hierarchy**: Drag and drop layers to bring elements forward or send them backward, with quick one-click eye toggles.
+- **Native Text Studio**: Create bold titles and watermarks on the fly without launching Photoshop. Customize font family (*Impact*, *Arial*, *Segoe UI*, etc.), font size, bold weight, fill color, outline stroke color, stroke thickness, and text alignment.
 
-FasTrack regenerates the three starter PNGs (`assets/valorant_title.png`, `assets/socials.png`, `assets/channel_logo.png`) at launch. To use your own art, change the matching `asset` path under the corresponding layer in the template JSON, for example:
+### 🛡️ Mobile Safe-Zone Overlays
+Never lose your clutch play behind a TikTok "Like" button or a YouTube Shorts caption. Toggle **Safe zones** to visualize standard mobile UI dead-zones directly over your preview in real-time.
 
-```json
-"channel_logo": {
-  "kind": "image",
-  "asset": "assets/my_channel_logo.png",
-  "rect": [0.695, 0.785, 0.275, 0.19],
-  "opacity": 1.0,
-  "z": 60,
-  "visible": true
-}
-```
+### 🏷️ Smart Auto-Naming & Output Tokens
+FasTrack automatically generates organized export filenames using dynamic tokens:
+- `{clip}` — Source recording title
+- `{game}` — Active game template
+- `{in}` & `{out}` — Exact trim points (e.g., `12s-35s`)
+- `{dur}` — Total short duration
+- `{date}` & `{time}` — Timestamp stamps
 
-Use transparent PNGs for clean overlays. Replace the title/social/logo paths with your own PNGs and keep the existing geometry as a starting point.
+---
 
-### Layer geometry
+## ⚡ Multi-Clip Batch Render Studio
 
-Every `rect` uses normalized `[x, y, width, height]` values from 0.0 to 1.0 relative to the output canvas. `[0, 0, 1, 1]` covers the complete canvas.
+Have 10 clutch clips from last night's stream? Don't export them one by one.
 
-For video layers, `crop` is another normalized `[x, y, width, height]` rectangle in the original source frame. For example:
+Double-click **`run_batch.bat`** to launch the **Batch Studio**:
+1. Drop your entire clips folder into the queue.
+2. Click through each clip to scrub and set its IN and OUT marks with live 9:16 layout previews.
+3. Select your export template and hit **Start Batch Render**.
+4. Sit back while FasTrack renders every short sequentially with dual progress bars.
 
-```json
-"killfeed": {
-  "kind": "video",
-  "rect": [0.445, 0.162, 0.555, 0.085],
-  "crop": [0.59, 0.018, 0.405, 0.20],
-  "fit": "cover",
-  "z": 20,
-  "visible": true
-}
-```
+---
 
-If your recorded HUD position differs from the reference, adjust `crop` rather than moving the whole recording. Adjust `rect` to move or resize the rendered crop on the portrait canvas.
+## ⌨️ Pro Keyboard Shortcuts
 
-### Image layers: free placement and resizing
+| Shortcut | Action |
+| :--- | :--- |
+| **`Space`** | Play / Pause playback |
+| **`I`** | Set clip **IN** point at current playhead |
+| **`O`** | Set clip **OUT** point at current playhead |
+| **`J`** | Shuttle backward (tap repeatedly for 2×, 4× speed) |
+| **`K`** | Pause shuttling / playback |
+| **`L`** | Shuttle forward (tap repeatedly for 2×, 4× speed) |
+| **`←` / `→`** | Step exactly 1 frame backward / forward |
+| **`Shift + ←` / `→`** | Jump 1 second backward / forward |
+| **`Ctrl + Z`** | Undo last layout, move, or crop change |
+| **`Ctrl + Shift + Z`** | Redo last undone change |
 
-Image layers (`valorant_title`, `socials`, `channel_logo`, or any picture you import) can be moved and resized freely — the picture fills its rectangle exactly as arranged in the editor, so what you draw is what renders. Fully transparent borders are trimmed automatically first. When you import a picture, the rectangle is matched to the image's own aspect ratio so it never starts out distorted. If a rectangle ever drifts out of shape, **Snap to image aspect** in the layer editor restores the natural proportions, and holding **Shift** while dragging the corner handle resizes proportionally.
+---
 
-To lock a picture to its natural aspect ratio permanently, set `"fit": "contain"` on that image layer. It is then scaled to the largest undistorted size that fits inside its rectangle, centered:
+## ⚙️ Hardware Acceleration
 
-```json
-"valorant_title": {
-  "kind": "image",
-  "asset": "assets/valorant_title.png",
-  "fit": "contain",
-  "rect": [0.128, 0.052, 0.803, 0.065]
-}
-```
+FasTrack includes intelligent auto-switching render profiles:
+* **GPU (NVIDIA NVENC)**: Lightning-fast hardware rendering optimized for modern NVIDIA graphics cards.
+* **CPU (x264)**: Universal, pristine software encoding that works on any modern Windows PC.
+* **Fast Draft Mode**: Quick export preset to check timing and audio before rendering full 60fps final masters.
 
-`background.blur`, `background.brightness` and `background.saturation` control the blurred backdrop. Tweak them live with the **Background look** sliders in the editor (the preview updates as you drag, and Ctrl+Z undoes), then use **Save layout to config.json** to keep the values. The `canvas` section controls dimensions, FPS, encoder, quality and presets.
+---
 
-## 7. Current scope / practical notes
-
-- Game templates are data, not code: each `templates/*.json` adds a fully working game in the dropdown. Assets for new games can point at any PNG on disk.
-- The preview is a frame-based composition editor, not a full multitrack NLE. It is designed for selecting a short segment and adjusting the reusable layout quickly.
-- For the current template, the killfeed/chat source crop is a fixed rectangle. If the HUD moves during a recording (for example due to a different resolution or HUD scale), adjust the crop to match that recording before rendering.
-- The main gameplay crop defaults to filling its center window. If you prefer to preserve the full 16:9 gameplay frame, widen the main window or change its `fit` value to `contain`.
-- The preview is completely live: dragging layers or editing numeric position/crop fields updates the composition in real time.
-
-## Troubleshooting
-
-**`FFmpeg was not found`** — install FFmpeg and add the folder containing `ffmpeg.exe` and `ffprobe.exe` to the Windows `PATH`, then reopen the terminal/editor.
-
-**NVENC initialization error** — update the NVIDIA driver and use an FFmpeg build with NVENC. Set Encoder to `Auto` or choose `CPU / x264` in the GUI.
-
-**GUI fails during install** — install dependencies with the same Python interpreter used to start FasTrack: `python -m pip install -r requirements.txt`.
-
-**Preview shows black or cannot open a file** — try an H.264 MP4 recording. Some unusual codecs/containers can be rendered by FFmpeg but may not decode in the OpenCV preview backend.
+<div align="center">
+  <b>Built for gamers who want to spend more time playing and less time editing.</b>
+</div>
