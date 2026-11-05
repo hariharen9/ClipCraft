@@ -10,7 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSize, QSizeF, QRectF, QEvent
-from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath
+from PySide6.QtGui import QColor, QBrush, QPen, QPixmap, QPainter, QCursor, QShortcut, QKeySequence, QIcon, QPainterPath, QFont
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QFrame, QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectItem, QGraphicsScene,
@@ -31,6 +31,18 @@ from .renderer import probe_video, run_render
 HANDLE_SIZE = 6.0
 MIN_LAYER_SIZE = 10.0
 BG_DEFAULTS = {"blur": 22, "brightness": -0.08, "saturation": 0.82}
+BG_PRESETS: dict[str, dict[str, float]] = {
+    "Dark Focus": {"blur": 22.0, "brightness": -0.08, "saturation": 0.82},
+    "Vivid Glow": {"blur": 20.0, "brightness": -0.04, "saturation": 1.35},
+    "Subtle Blur": {"blur": 8.0, "brightness": -0.05, "saturation": 1.00},
+    "Original Brightness": {"blur": 22.0, "brightness": 0.00, "saturation": 1.00},
+}
+
+RENDER_PRESETS: dict[str, dict[str, Any]] = {
+    "Fast Draft": {"fps": 30, "quality": 26, "encoder": "auto"},
+    "Balanced": {"fps": 60, "quality": 19, "encoder": "auto"},
+    "Best Quality 60fps": {"fps": 60, "quality": 14, "encoder": "nvenc"},
+}
 SUPPORTED_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
 
@@ -96,6 +108,68 @@ class HandleItem(QGraphicsRectItem):
         self.layer.commit("Resize")
         event.accept()
 
+
+class SafeZoneOverlayItem(QGraphicsItem):
+    """Semi-transparent guide overlay showing mobile UI dead-zones (YouTube Shorts & TikTok)."""
+
+    def __init__(self, width: float, height: float):
+        super().__init__()
+        self.w = float(width)
+        self.h = float(height)
+        self.setZValue(9999.0)  # Always floats on top of all layers
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)  # Transparent to mouse interaction
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0.0, 0.0, self.w, self.h)
+
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.w, self.h
+
+        # Modern semi-transparent cyan / blue mobile safe zone styling
+        border_pen = QPen(QColor(0, 220, 255, 160), 1.0, Qt.PenStyle.DashLine)
+        fill_brush = QColor(0, 180, 255, 25)
+
+        # 1. Top Bar Deadzone (Header, Search, Sound title) ~ 11%
+        top_h = h * 0.11
+        painter.setPen(border_pen)
+        painter.setBrush(fill_brush)
+        painter.drawRect(QRectF(0.0, 0.0, w, top_h))
+
+        # 2. Bottom Captions & Profile Deadzone ~ 20%
+        bot_h = h * 0.20
+        bot_y = h - bot_h
+        painter.drawRect(QRectF(0.0, bot_y, w, bot_h))
+
+        # 3. Right Engagement Actions (Like, Comments, Share, Audio disc) ~ 19%
+        right_w = w * 0.19
+        right_x = w - right_w
+        action_y = h * 0.35
+        action_h = h * 0.44
+        painter.drawRect(QRectF(right_x, action_y, right_w, action_h))
+
+        # Labels
+        painter.setPen(QColor(0, 230, 255, 210))
+        font = painter.font()
+        font.setPointSize(max(7, int(8 * (w / 360.0))))
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+
+        painter.drawText(
+            QRectF(8.0, 2.0, w - 16.0, top_h - 4.0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "TOP BAR (SEARCH / AUDIO)",
+        )
+        painter.drawText(
+            QRectF(8.0, bot_y + 2.0, w - right_w - 12.0, bot_h - 4.0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            "BOTTOM (TITLE / CAPTIONS / PROFILE)",
+        )
+        painter.drawText(
+            QRectF(right_x + 2.0, action_y + 4.0, right_w - 4.0, action_h - 8.0),
+            Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+            "ACTIONS\n(LIKE / SHARE)",
+        )
 
 class LayerItem(QGraphicsPixmapItem):
     """A canvas layer: drag the body to move, drag a grip to resize.
@@ -570,6 +644,8 @@ class FasTrackWindow(QMainWindow):
         remembered = str(state.get("source_dir", ""))
         self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
         self.show_grips = bool(state.get("show_grips", True))
+        self.show_safe_zones = bool(state.get("show_safe_zones", False))
+        self._safe_zone_item: SafeZoneOverlayItem | None = None
         self.video_path: str | None = None
         self.video_info: dict[str, Any] | None = None
         self.capture: cv2.VideoCapture | None = None
@@ -736,6 +812,12 @@ class FasTrackWindow(QMainWindow):
 
         bg_group = QGroupBox("Background look")
         bg_form = QFormLayout(bg_group)
+        self.bg_preset_combo = QComboBox()
+        self.bg_preset_combo.addItem("Custom", "")
+        for p_name in BG_PRESETS:
+            self.bg_preset_combo.addItem(p_name, p_name)
+        self.bg_preset_combo.currentIndexChanged.connect(self._on_bg_preset_selected)
+        bg_form.addRow("Preset", self.bg_preset_combo)
         bg_specs = (
             ("blur", "Blur", 1, 60, 1.0, 0),
             ("brightness", "Brightness", -50, 50, 0.01, 2),
@@ -774,6 +856,12 @@ class FasTrackWindow(QMainWindow):
         output_row.addWidget(output_browse)
         render_layout.addLayout(output_row)
         render_form = QFormLayout()
+        self.render_preset_combo = QComboBox()
+        self.render_preset_combo.addItem("Custom", "")
+        for r_name in RENDER_PRESETS:
+            self.render_preset_combo.addItem(r_name, r_name)
+        self.render_preset_combo.currentIndexChanged.connect(self._on_render_preset_selected)
+        render_form.addRow("Preset", self.render_preset_combo)
         self.width_spin = QSpinBox()
         self.width_spin.setRange(180, 4320)
         self.width_spin.setSingleStep(2)
@@ -831,6 +919,11 @@ class FasTrackWindow(QMainWindow):
         self.sharp_check.setToolTip("Render the preview at 540×960 instead of 360×640 (a bit heavier during playback)")
         self.sharp_check.stateChanged.connect(self._toggle_sharp)
         header.addWidget(self.sharp_check)
+        self.safe_zones_check = QCheckBox("Safe zones")
+        self.safe_zones_check.setChecked(self.show_safe_zones)
+        self.safe_zones_check.setToolTip("Show or hide YouTube Shorts & TikTok mobile UI safe zone guides (off by default)")
+        self.safe_zones_check.stateChanged.connect(self._toggle_safe_zones)
+        header.addWidget(self.safe_zones_check)
         layout.addLayout(header)
         self.scene = QGraphicsScene(self)
         preview_w, preview_h = self._preview_size()
@@ -1288,6 +1381,20 @@ class FasTrackWindow(QMainWindow):
     def _speed_changed(self, index: int) -> None:
         self._play_speed = float(self.speed_combo.itemData(index) or 1.0)
 
+    def _toggle_safe_zones(self, state: int) -> None:
+        self.show_safe_zones = state == int(Qt.CheckState.Checked.value)
+        try:
+            app_state = load_state()
+            app_state["show_safe_zones"] = self.show_safe_zones
+            save_state(app_state)
+        except OSError:
+            pass
+        if self._safe_zone_item is not None:
+            self._safe_zone_item.setVisible(self.show_safe_zones)
+        else:
+            self.refresh_canvas()
+        self.statusBar().showMessage("Safe-zone guides enabled (YouTube Shorts / TikTok)" if self.show_safe_zones else "Safe-zone guides hidden")
+
     def _toggle_sharp(self, state: int) -> None:
         self.preview_sharp = state == int(Qt.CheckState.Checked.value)
         self.preview_scale = 1.5 if self.preview_sharp else 1.0
@@ -1727,6 +1834,46 @@ class FasTrackWindow(QMainWindow):
         if self.config.get("background", {}) != snapshot.get("background", {}):
             self._push_undo(label, snapshot)
 
+    def _on_bg_preset_selected(self, index: int) -> None:
+        p_name = self.bg_preset_combo.itemData(index)
+        if not p_name or p_name not in BG_PRESETS:
+            return
+        preset = BG_PRESETS[p_name]
+        self._snapshot(f"Apply background preset: {p_name}")
+        background = self.config.setdefault("background", {})
+        for key, val in preset.items():
+            background[key] = val
+        self._sync_background_controls()
+        self.refresh_canvas()
+        self.statusBar().showMessage(f"Applied background preset: {p_name}")
+
+    def _on_render_preset_selected(self, index: int) -> None:
+        p_name = self.render_preset_combo.itemData(index)
+        if not p_name or p_name not in RENDER_PRESETS:
+            return
+        preset = RENDER_PRESETS[p_name]
+        self.fps_spin.blockSignals(True)
+        self.quality_spin.blockSignals(True)
+        self.encoder_combo.blockSignals(True)
+
+        self.fps_spin.setValue(int(preset["fps"]))
+        self.quality_spin.setValue(int(preset["quality"]))
+        enc_idx = self.encoder_combo.findData(preset["encoder"])
+        if enc_idx >= 0:
+            self.encoder_combo.setCurrentIndex(enc_idx)
+
+        self.fps_spin.blockSignals(False)
+        self.quality_spin.blockSignals(False)
+        self.encoder_combo.blockSignals(False)
+
+        # Update canvas config
+        canvas = self.config.setdefault("canvas", {})
+        canvas["fps"] = int(preset["fps"])
+        canvas["quality"] = int(preset["quality"])
+        canvas["encoder"] = preset["encoder"]
+
+        self.statusBar().showMessage(f"Applied render preset: {p_name} (FPS={preset['fps']}, Quality={preset['quality']})")
+
     def _sync_background_controls(self):
         background = self.config.get("background", {})
         for key, (slider, value_label, scale, decimals) in self.bg_sliders.items():
@@ -1735,6 +1882,18 @@ class FasTrackWindow(QMainWindow):
             slider.setValue(int(round(value / scale)))
             slider.blockSignals(False)
             value_label.setText(f"{value:.{decimals}f}")
+
+        # Check if current background matches any preset
+        if hasattr(self, "bg_preset_combo"):
+            matched_preset = ""
+            for p_name, p_vals in BG_PRESETS.items():
+                if all(abs(float(background.get(k, BG_DEFAULTS[k])) - v) < 0.005 for k, v in p_vals.items()):
+                    matched_preset = p_name
+                    break
+            idx = self.bg_preset_combo.findData(matched_preset)
+            self.bg_preset_combo.blockSignals(True)
+            self.bg_preset_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.bg_preset_combo.blockSignals(False)
 
     def refresh_canvas(self):
         if self.current_frame is None:
@@ -1781,6 +1940,10 @@ class FasTrackWindow(QMainWindow):
             item.setOpacity(max(0.0, min(1.0, float(layer.get("opacity", 1.0)))))
             self.scene.addItem(item)
             self.layer_items[name] = item
+        safe_item = SafeZoneOverlayItem(canvas_w, canvas_h)
+        safe_item.setVisible(self.show_safe_zones)
+        self.scene.addItem(safe_item)
+        self._safe_zone_item = safe_item
         if hasattr(self, 'layer_stack'):
             self.layer_stack.populate(self.config.get('layers', {}), self._active_layer_name())
         self.select_layer()
