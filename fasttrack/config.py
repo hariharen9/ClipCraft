@@ -2,13 +2,40 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = APP_DIR / "config.json"  # legacy location, auto-migrated into templates/
-STATE_FILE = APP_DIR / "fasttrack_state.json"
 TEMPLATES_DIR = APP_DIR / "templates"
+
+
+def get_state_file() -> Path:
+    """Resolve state file location.
+
+    If a local fasttrack_state.json exists in the project root, it is preserved
+    (portable mode). Otherwise, standard user directory is used:
+      Windows: %LOCALAPPDATA%/FasTrack/state.json
+      macOS/Linux: ~/.config/fasttrack/state.json
+    """
+    local_file = APP_DIR / "fasttrack_state.json"
+    if local_file.is_file():
+        return local_file
+
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "FasTrack" / "state.json"
+        return Path.home() / ".fasttrack" / "state.json"
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME")
+        if base:
+            return Path(base) / "fasttrack" / "state.json"
+        return Path.home() / ".config" / "fasttrack" / "state.json"
+
+
+STATE_FILE = get_state_file()
 
 
 def load_config(path: str | Path | None = None) -> tuple[dict[str, Any], Path]:
@@ -34,7 +61,7 @@ def save_config(data: dict[str, Any], path: str | Path) -> None:
 
 def load_state(path: str | Path | None = None) -> dict[str, Any]:
     """Load small UI state (e.g. the last used source folder); missing or broken files read as empty."""
-    state_path = Path(path) if path else STATE_FILE
+    state_path = Path(path) if path else get_state_file()
     try:
         with state_path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -44,13 +71,22 @@ def load_state(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def save_state(data: dict[str, Any], path: str | Path | None = None) -> None:
-    state_path = Path(path) if path else STATE_FILE
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    temp = state_path.with_suffix(state_path.suffix + ".tmp")
-    with temp.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
-    temp.replace(state_path)
+    state_path = Path(path) if path else get_state_file()
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = state_path.with_suffix(state_path.suffix + ".tmp")
+        with temp.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        temp.replace(state_path)
+    except OSError:
+        # Fallback to local app dir if OS directory creation fails
+        fallback = APP_DIR / "fasttrack_state.json"
+        temp = fallback.with_suffix(fallback.suffix + ".tmp")
+        with temp.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        temp.replace(fallback)
 
 
 def validate_config(data: dict[str, Any]) -> None:
