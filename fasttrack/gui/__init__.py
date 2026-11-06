@@ -14,6 +14,13 @@ from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCropDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .main_window import FasTrackWindow, launch_gui
+from .batch_window import (
+    BatchWindow,
+    BatchJob,
+    TrimTimeline,
+    BatchRenderWorker,
+    launch_batch_gui,
+)
 from .worker import RenderWorker
 
 __all__ = [
@@ -36,4 +43,9 @@ __all__ = [
     "RenderWorker",
     "FasTrackWindow",
     "launch_gui",
+    "BatchWindow",
+    "BatchJob",
+    "TrimTimeline",
+    "BatchRenderWorker",
+    "launch_batch_gui",
 ]

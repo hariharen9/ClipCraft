@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.batch:
         try:
-            from fasttrack.batch_gui import launch_batch_gui
+            from fasttrack.gui import launch_batch_gui
             return int(launch_batch_gui(game, args.config) or 0)
         except ImportError as exc:
             print(
