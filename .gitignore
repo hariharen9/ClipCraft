@@ -9,3 +9,4 @@ fasttrack_state.json
 clipcraft_state.json
 .pytest_cache/
 *.zip
+*.egg-info
