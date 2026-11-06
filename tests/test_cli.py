@@ -6,13 +6,13 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("fasttrack_script", ROOT / "fasttrack.py")
-fasttrack_script = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(fasttrack_script)
+spec = importlib.util.spec_from_file_location("clipcraft_script", ROOT / "clipcraft.py")
+clipcraft_script = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clipcraft_script)
 
-parse_time = fasttrack_script.parse_time
-build_parser = fasttrack_script.build_parser
-default_output = fasttrack_script.default_output
+parse_time = clipcraft_script.parse_time
+build_parser = clipcraft_script.build_parser
+default_output = clipcraft_script.default_output
 
 
 class TestCli(unittest.TestCase):

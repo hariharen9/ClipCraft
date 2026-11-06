@@ -4,7 +4,8 @@ import unittest
 import numpy as np
 from PySide6.QtWidgets import QApplication
 
-from fasttrack.gui import (
+from clipcraft.gui import (
+    ClipCraftWindow,
     FasTrackWindow,
     BatchWindow,
     TransportWidget,
@@ -47,8 +48,8 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertTrue(inspector.undo_button.isEnabled())
         self.assertFalse(inspector.redo_button.isEnabled())
 
-    def test_fastrack_window_instantiation(self):
-        win = FasTrackWindow(None, "valorant")
+    def test_clipcraft_window_instantiation(self):
+        win = ClipCraftWindow(None, "valorant")
         self.assertIsNotNone(win.transport)
         self.assertIsNotNone(win.inspector)
         self.assertEqual(win.game, "valorant")
@@ -58,6 +59,9 @@ class TestGuiSmoke(unittest.TestCase):
         win.layer_stack.list_widget.setCurrentRow(0)
         active = win._active_layer_name()
         self.assertIsNotNone(active)
+
+        # Verify backward-compatibility alias
+        self.assertIs(FasTrackWindow, ClipCraftWindow)
 
     def test_batch_window_instantiation(self):
         batch = BatchWindow("valorant")

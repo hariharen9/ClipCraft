@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsRectI
 from .constants import HANDLE_SIZE, MIN_LAYER_SIZE
 
 if TYPE_CHECKING:
-    from .main_window import FasTrackWindow
+    from .main_window import ClipCraftWindow
 
 class HandleItem(QGraphicsRectItem):
     """A resize grip pinned to an edge or corner of a LayerItem.

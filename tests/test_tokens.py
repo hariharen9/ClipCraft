@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime
 
-from fasttrack.gui.constants import format_token_time
+from clipcraft.gui.constants import format_token_time
 
 
 class TestTokens(unittest.TestCase):

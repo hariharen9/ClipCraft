@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fasttrack-gaming-shorts"
+name = "clipcraft"
 version = "0.1.0"
-description = "A template-driven gaming shorts editor using PySide6 and FFmpeg"
+description = "A template-driven gaming shorts and video layout editor using PySide6 and FFmpeg"
 requires-python = ">=3.10"
 dependencies = [
   "PySide6>=6.7,<7",
@@ -16,4 +16,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["fasttrack"]
+packages = ["clipcraft"]

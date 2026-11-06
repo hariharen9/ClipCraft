@@ -1,6 +1,6 @@
-"""FasTrack quick-edit launcher.
+"""ClipCraft quick-edit launcher.
 
-Drop one or more video files onto this icon in Explorer and the FasTrack editor
+Drop one or more video files onto this icon in Explorer and the ClipCraft editor
 opens with the first clip already loaded — no console window, no Browse step.
 Double-clicking it opens the editor empty (it remembers your last source folder).
 
@@ -24,14 +24,14 @@ def main() -> int:
             root = tk.Tk()
             root.withdraw()
             messagebox.showerror(
-                "FasTrack",
-                "The .venv folder is missing.\n\nRun install.bat once to set up FasTrack,\nthen use quick_edit.pyw again.",
+                "ClipCraft",
+                "The .venv folder is missing.\n\nRun install.bat once to set up ClipCraft,\nthen use quick_edit.pyw again.",
             )
         except Exception:
             pass
         return 2
     clips = [arg for arg in sys.argv[1:] if Path(arg).suffix.lower() in VIDEO_SUFFIXES]
-    command = [str(pythonw), str(ROOT / "fasttrack.py")]
+    command = [str(pythonw), str(ROOT / "clipcraft.py")]
     if clips:
         command.append(clips[0])
     command.append("--gui")

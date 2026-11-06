@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from fasttrack.config import get_state_file, load_state, save_state
+from clipcraft.config import get_state_file, load_state, save_state
 
 
 class TestState(unittest.TestCase):

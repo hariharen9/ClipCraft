@@ -4,9 +4,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from fasttrack.assets import ensure_assets
-from fasttrack.config import load_config
-from fasttrack.renderer import run_render, probe_video
+from clipcraft.assets import ensure_assets
+from clipcraft.config import load_config
+from clipcraft.renderer import run_render, probe_video
 
 
 def parse_time(value: str) -> float:
@@ -38,8 +38,8 @@ def parse_time(value: str) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fasttrack",
-        description="FasTrack — turn gameplay recordings into vertical gaming Shorts.",
+        prog="clipcraft",
+        description="ClipCraft — turn gameplay recordings into vertical gaming Shorts.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("video", nargs="?", help="Input recording (MP4, MKV, MOV, AVI, WEBM)")
@@ -67,31 +67,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.batch:
         try:
-            from fasttrack.gui import launch_batch_gui
+            from clipcraft.gui import launch_batch_gui
             return int(launch_batch_gui(game, args.config) or 0)
         except ImportError as exc:
             print(
-                "[FasTrack] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
+                "[ClipCraft] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
                 + f"Details: {exc}", file=sys.stderr
             )
             return 2
         except Exception as exc:
-            print(f"[FasTrack] Could not start batch UI: {exc}", file=sys.stderr)
+            print(f"[ClipCraft] Could not start batch UI: {exc}", file=sys.stderr)
             return 2
 
     if args.gui or not args.render and (args.in_time is None or args.out_time is None):
         # The GUI resolves the template itself: --config, -g, or the last used one.
         try:
-            from fasttrack.gui import launch_gui
+            from clipcraft.gui import launch_gui
             return int(launch_gui(args.video, game, args.config) or 0)
         except ImportError as exc:
             print(
-                "[FasTrack] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
+                "[ClipCraft] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
                 f"Details: {exc}", file=sys.stderr
             )
             return 2
         except Exception as exc:
-            print(f"[FasTrack] Could not start GUI: {exc}", file=sys.stderr)
+            print(f"[ClipCraft] Could not start GUI: {exc}", file=sys.stderr)
             return 2
 
     if not args.video:
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.config:
             config, config_path = load_config(args.config)
         else:
-            from fasttrack.config import migrate_legacy_config, template_path, available_templates
+            from clipcraft.config import migrate_legacy_config, template_path, available_templates
             migrate_legacy_config()
             game_id = game or "valorant"
             template = template_path(game_id)
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"--out exceeds the recording duration ({info['duration']:.3f} seconds).")
         output_path = Path(args.output).expanduser().resolve() if args.output else default_output(video_path, game_id)
         if args.print_command:
-            from fasttrack.renderer import build_ffmpeg_command
+            from clipcraft.renderer import build_ffmpeg_command
             command, duration = build_ffmpeg_command(
                 video_path, output_path, args.in_time, args.out_time,
                 config, config_path, args.encoder
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nClip duration: {duration:.3f}s | Source: {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
             return 0
 
-        print(f"FasTrack · {game_id.title()} · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
+        print(f"ClipCraft · {game_id.title()} · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
         print(f"IN {args.in_time:.3f}s → OUT {args.out_time:.3f}s ({args.out_time - args.in_time:.3f}s)")
         print(f"Output: {output_path}")
 
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n\nDone: {rendered}")
         return 0
     except Exception as exc:
-        print(f"\n[FasTrack] Render failed: {exc}", file=sys.stderr)
+        print(f"\n[ClipCraft] Render failed: {exc}", file=sys.stderr)
         return 1
 
 

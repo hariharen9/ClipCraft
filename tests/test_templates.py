@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import unittest
 
-from fasttrack.config import available_templates, template_path, load_config, clone_config
+from clipcraft.config import available_templates, template_path, load_config, clone_config
 
 
 class TestTemplates(unittest.TestCase):

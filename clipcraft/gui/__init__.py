@@ -15,7 +15,7 @@ from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCr
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
-from .main_window import FasTrackWindow, launch_gui
+from .main_window import ClipCraftWindow, FasTrackWindow, launch_gui
 from .batch_window import (
     BatchWindow,
     BatchJob,
@@ -45,6 +45,7 @@ __all__ = [
     "VisualCropBoxItem",
     "VisualSourceCropDialog",
     "RenderWorker",
+    "ClipCraftWindow",
     "FasTrackWindow",
     "launch_gui",
     "BatchWindow",

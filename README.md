@@ -1,4 +1,4 @@
-# FasTrack ⚡
+# ClipCraft ⚡
 ### Turn 16:9 Gameplay Recordings into Viral 9:16 Vertical Shorts in Seconds.
 
 ![Platform](https://img.shields.io/badge/Platform-Windows-blue?style=flat-square&logo=windows)
@@ -8,13 +8,13 @@
 
 ---
 
-**FasTrack** is a high-speed, creator-first video editor built specifically for gamers and streamers. Instead of spending 30 minutes keyframing and cropping inside complex editing suites like Premiere Pro or DaVinci Resolve, FasTrack turns raw horizontal gameplay into high-impact, multi-layer vertical videos with a few clicks.
+**ClipCraft** is a high-speed, creator-first video editor built specifically for gamers and streamers. Instead of spending 30 minutes keyframing and cropping inside complex editing suites like Premiere Pro or DaVinci Resolve, ClipCraft turns raw horizontal gameplay into high-impact, multi-layer vertical videos with a few clicks.
 
 Drop your recording, pick your moments, align your layout, and export crisp 60fps shorts ready for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
 ---
 
-## ✨ Why Creators Love FasTrack
+## ✨ Why Creators Love ClipCraft
 
 * **Instant Multi-Layer Magic**: Automatically splits single 16:9 footage into an immersive blurred background, a focused center gameplay feed, and dedicated crops for your facecam, killfeed, or chat.
 * **Real-Time Visual Cropping**: No guesswork. Frame your killfeed or facecam by simply dragging an interactive box directly over the uncropped source recording.
@@ -68,7 +68,7 @@ Forget entering manual pixel numbers. Opening the visual cropper displays the fu
 Never lose your clutch play behind a TikTok "Like" button or a YouTube Shorts caption. Toggle **Safe zones** to visualize standard mobile UI dead-zones directly over your preview in real-time.
 
 ### 🏷️ Smart Auto-Naming & Output Tokens
-FasTrack automatically generates organized export filenames using dynamic tokens:
+ClipCraft automatically generates organized export filenames using dynamic tokens:
 - `{clip}` — Source recording title
 - `{game}` — Active game template
 - `{in}` & `{out}` — Exact trim points (e.g., `12s-35s`)
@@ -85,7 +85,7 @@ Double-click **`run_batch.bat`** to launch the **Batch Studio**:
 1. Drop your entire clips folder into the queue.
 2. Click through each clip to scrub and set its IN and OUT marks with live 9:16 layout previews.
 3. Select your export template and hit **Start Batch Render**.
-4. Sit back while FasTrack renders every short sequentially with dual progress bars.
+4. Sit back while ClipCraft renders every short sequentially with dual progress bars.
 
 ---
 
@@ -108,7 +108,7 @@ Double-click **`run_batch.bat`** to launch the **Batch Studio**:
 
 ## ⚙️ Hardware Acceleration
 
-FasTrack includes intelligent auto-switching render profiles:
+ClipCraft includes intelligent auto-switching render profiles:
 * **GPU (NVIDIA NVENC)**: Lightning-fast hardware rendering optimized for modern NVIDIA graphics cards.
 * **CPU (x264)**: Universal, pristine software encoding that works on any modern Windows PC.
 * **Fast Draft Mode**: Quick export preset to check timing and audio before rendering full 60fps final masters.

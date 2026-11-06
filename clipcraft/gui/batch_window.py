@@ -1,4 +1,4 @@
-"""FasTrack Batch Render — trim and render multiple clips with live 9:16 preview.
+"""ClipCraft Batch Render — trim and render multiple clips with live 9:16 preview.
 
 Allows adding multiple recordings, setting IN/OUT times visually, seeing an instant
 live render preview according to the selected layout template (Valorant, General, etc.),
@@ -266,11 +266,11 @@ class BatchWindow(QMainWindow):
 
     def __init__(self, game: str | None = None, config_path: str | None = None):
         super().__init__()
-        self.setWindowTitle("FasTrack — Batch Render Studio")
+        self.setWindowTitle("ClipCraft — Batch Render Studio")
         self.setMinimumSize(1100, 700)
         self.resize(1340, 820)
 
-        icon_path = Path(__file__).resolve().parent.parent / "assets" / "fastrack.ico"
+        icon_path = Path(__file__).resolve().parent.parent / "assets" / "clipcraft.ico"
         if icon_path.is_file():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -1225,7 +1225,7 @@ class BatchWindow(QMainWindow):
 def launch_batch_gui(game: str | None = None, config_path: str | None = None) -> int:
     """Create or reuse a QApplication and open the batch render window."""
     app = QApplication.instance() or QApplication(sys.argv)
-    icon_path = Path(__file__).resolve().parent.parent / "assets" / "fastrack.ico"
+    icon_path = Path(__file__).resolve().parent.parent / "assets" / "clipcraft.ico"
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     window = BatchWindow(game, config_path)

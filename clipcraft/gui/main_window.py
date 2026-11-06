@@ -95,10 +95,10 @@ from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
 from .worker import RenderWorker
 
-class FasTrackWindow(QMainWindow):
+class ClipCraftWindow(QMainWindow):
     def __init__(self, video_path: str | None, game: str | None = None, config_path: str | Path | None = None):
         super().__init__()
-        self.setWindowTitle("FasTrack Video Editor — Gaming Shorts")
+        self.setWindowTitle("ClipCraft Video Editor — Gaming Shorts")
         self.resize(1510, 940)
         self.setMinimumSize(1100, 720)
         self.setAcceptDrops(True)
@@ -107,7 +107,7 @@ class FasTrackWindow(QMainWindow):
         ensure_assets(self.config, self.config_path)
         self.original_config = clone_config(self.config)
         self.template_name = str(self.config.get("name") or self.game.replace("_", " ").title())
-        self.setWindowTitle(f"FasTrack Video Editor — {self.template_name}")
+        self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
         remembered = str(state.get("source_dir", ""))
         self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
         self.show_grips = bool(state.get("show_grips", True))
@@ -1206,7 +1206,7 @@ class FasTrackWindow(QMainWindow):
         self.config, self.config_path = new_config, new_path
         ensure_assets(self.config, self.config_path)
         self.template_name = str(self.config.get("name") or game_id.replace("_", " ").title())
-        self.setWindowTitle(f"FasTrack Video Editor — {self.template_name}")
+        self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
         self._remember_template(game_id)
         self._rebuild_layer_combo()
         self._update_output_path()
@@ -1820,7 +1820,7 @@ class FasTrackWindow(QMainWindow):
         if self.capture is not None:
             self.capture.release()
         if self.worker is not None and self.worker.isRunning():
-            QMessageBox.warning(self, "Render in progress", "Wait for the current render to finish before closing FasTrack.")
+            QMessageBox.warning(self, "Render in progress", "Wait for the current render to finish before closing ClipCraft.")
             event.ignore()
             return
         event.accept()
@@ -1828,6 +1828,10 @@ class FasTrackWindow(QMainWindow):
 
 def launch_gui(video_path: str | None, game: str, config_path: str | Path | None = None):
     app = QApplication.instance() or QApplication([])
-    window = FasTrackWindow(video_path, game, config_path)
+    window = ClipCraftWindow(video_path, game, config_path)
     window.show()
     return app.exec()
+
+
+# Backward-compatibility alias
+FasTrackWindow = ClipCraftWindow

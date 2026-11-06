@@ -14,25 +14,26 @@ TEMPLATES_DIR = APP_DIR / "templates"
 def get_state_file() -> Path:
     """Resolve state file location.
 
-    If a local fasttrack_state.json exists in the project root, it is preserved
-    (portable mode). Otherwise, standard user directory is used:
-      Windows: %LOCALAPPDATA%/FasTrack/state.json
-      macOS/Linux: ~/.config/fasttrack/state.json
+    If a local clipcraft_state.json (or legacy fasttrack_state.json) exists in the project root,
+    it is preserved (portable mode). Otherwise, standard user directory is used:
+      Windows: %LOCALAPPDATA%/ClipCraft/state.json
+      macOS/Linux: ~/.config/clipcraft/state.json
     """
-    local_file = APP_DIR / "fasttrack_state.json"
-    if local_file.is_file():
-        return local_file
+    for fname in ("clipcraft_state.json", "fasttrack_state.json"):
+        local_file = APP_DIR / fname
+        if local_file.is_file():
+            return local_file
 
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         if base:
-            return Path(base) / "FasTrack" / "state.json"
-        return Path.home() / ".fasttrack" / "state.json"
+            return Path(base) / "ClipCraft" / "state.json"
+        return Path.home() / ".clipcraft" / "state.json"
     else:
         base = os.environ.get("XDG_CONFIG_HOME")
         if base:
-            return Path(base) / "fasttrack" / "state.json"
-        return Path.home() / ".config" / "fasttrack" / "state.json"
+            return Path(base) / "clipcraft" / "state.json"
+        return Path.home() / ".config" / "clipcraft" / "state.json"
 
 
 STATE_FILE = get_state_file()
@@ -81,7 +82,7 @@ def save_state(data: dict[str, Any], path: str | Path | None = None) -> None:
         temp.replace(state_path)
     except OSError:
         # Fallback to local app dir if OS directory creation fails
-        fallback = APP_DIR / "fasttrack_state.json"
+        fallback = APP_DIR / "clipcraft_state.json"
         temp = fallback.with_suffix(fallback.suffix + ".tmp")
         with temp.open("w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, ensure_ascii=False)

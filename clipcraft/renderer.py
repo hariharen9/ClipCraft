@@ -204,7 +204,7 @@ def build_filter_complex(
                 align=align,
                 canvas_w=out_w,
             )
-            temp_path = Path(tempfile.gettempdir()) / f"fasttrack_txt_{name}_{os.getpid()}.png"
+            temp_path = Path(tempfile.gettempdir()) / f"clipcraft_txt_{name}_{os.getpid()}.png"
             PILImage.fromarray(img_arr).save(temp_path)
             overlay_inputs.append(temp_path)
             text_label = f"txt_{name}"
@@ -334,7 +334,7 @@ def run_render(
             progress(100.0, "Render complete")
         return output_path
     finally:
-        for p in Path(tempfile.gettempdir()).glob(f"fasttrack_txt_*_{os.getpid()}.png"):
+        for p in Path(tempfile.gettempdir()).glob(f"clipcraft_txt_*_{os.getpid()}.png"):
             try:
                 p.unlink()
             except OSError:
