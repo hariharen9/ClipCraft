@@ -6,3 +6,4 @@ exports/
 *.mkv
 /assets/
 fasttrack_state.json
+.pytest_cache/
