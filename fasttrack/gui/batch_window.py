@@ -15,6 +15,7 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
+import qtawesome as qta
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -74,10 +75,13 @@ class BatchJob:
     def display_name(self) -> str:
         return self.video_path.name
 
-    def status_icon(self) -> str:
+    def status_qicon(self) -> QIcon:
         return {
-            "ready": "⏳", "rendering": "⟳", "done": "✅", "error": "❌",
-        }.get(self.status, "?")
+            "ready": qta.icon("fa5s.clock", color="#8e8e93"),
+            "rendering": qta.icon("fa5s.spinner", color="#0078d4"),
+            "done": qta.icon("fa5s.check-circle", color="#4CAF50"),
+            "error": qta.icon("fa5s.exclamation-circle", color="#f44336"),
+        }.get(self.status, qta.icon("fa5s.question-circle", color="#8e8e93"))
 
 
 # ── Custom Widgets ──────────────────────────────────────────────────
@@ -351,7 +355,7 @@ class BatchWindow(QMainWindow):
         vbox.setContentsMargins(0, 0, 0, 0)
         vbox.setSpacing(6)
 
-        header = QLabel("📁  Clip Queue")
+        header = QLabel("Clip Queue")
         header.setStyleSheet("font-weight: bold; font-size: 13px; padding: 2px 0;")
         vbox.addWidget(header)
 
@@ -366,15 +370,18 @@ class BatchWindow(QMainWindow):
         vbox.addWidget(self._job_list, 1)
 
         btns = QHBoxLayout()
-        self._add_btn = QPushButton("+ Add Videos")
+        self._add_btn = QPushButton(" Add Videos")
+        self._add_btn.setIcon(qta.icon("fa5s.plus", color="#ffffff"))
         self._add_btn.clicked.connect(self._add_videos_dialog)
         btns.addWidget(self._add_btn)
 
-        self._remove_btn = QPushButton("✕ Remove")
+        self._remove_btn = QPushButton(" Remove")
+        self._remove_btn.setIcon(qta.icon("fa5s.trash-alt", color="#e0e0e0"))
         self._remove_btn.clicked.connect(self._remove_selected)
         btns.addWidget(self._remove_btn)
 
-        self._clear_btn = QPushButton("Clear")
+        self._clear_btn = QPushButton(" Clear")
+        self._clear_btn.setIcon(qta.icon("fa5s.times", color="#e0e0e0"))
         self._clear_btn.clicked.connect(self._clear_all)
         btns.addWidget(self._clear_btn)
 
@@ -415,31 +422,36 @@ class BatchWindow(QMainWindow):
         play_row.setSpacing(6)
         play_row.addStretch()
 
-        self._prev_clip_btn = QPushButton("⏮")
+        self._prev_clip_btn = QPushButton()
+        self._prev_clip_btn.setIcon(qta.icon("fa5s.fast-backward", color="#e0e0e0"))
         self._prev_clip_btn.setFixedSize(36, 30)
         self._prev_clip_btn.setToolTip("Previous clip in queue")
         self._prev_clip_btn.clicked.connect(self._prev_clip)
         play_row.addWidget(self._prev_clip_btn)
 
-        self._step_back_btn = QPushButton("◀")
+        self._step_back_btn = QPushButton()
+        self._step_back_btn.setIcon(qta.icon("fa5s.step-backward", color="#e0e0e0"))
         self._step_back_btn.setFixedSize(36, 30)
         self._step_back_btn.setToolTip("Step back 1 frame (Left)")
         self._step_back_btn.clicked.connect(lambda: self._step_frames(-1))
         play_row.addWidget(self._step_back_btn)
 
-        self._play_btn = QPushButton("▶  Play")
+        self._play_btn = QPushButton(" Play")
+        self._play_btn.setIcon(qta.icon("fa5s.play", color="#e0e0e0"))
         self._play_btn.setFixedSize(96, 32)
         self._play_btn.setToolTip("Play / Pause (Space)")
         self._play_btn.clicked.connect(self._toggle_play)
         play_row.addWidget(self._play_btn)
 
-        self._step_fwd_btn = QPushButton("▶")
+        self._step_fwd_btn = QPushButton()
+        self._step_fwd_btn.setIcon(qta.icon("fa5s.step-forward", color="#e0e0e0"))
         self._step_fwd_btn.setFixedSize(36, 30)
         self._step_fwd_btn.setToolTip("Step forward 1 frame (Right)")
         self._step_fwd_btn.clicked.connect(lambda: self._step_frames(1))
         play_row.addWidget(self._step_fwd_btn)
 
-        self._next_clip_btn = QPushButton("⏭")
+        self._next_clip_btn = QPushButton()
+        self._next_clip_btn.setIcon(qta.icon("fa5s.fast-forward", color="#e0e0e0"))
         self._next_clip_btn.setFixedSize(36, 30)
         self._next_clip_btn.setToolTip("Next clip in queue")
         self._next_clip_btn.clicked.connect(self._next_clip)
@@ -462,8 +474,10 @@ class BatchWindow(QMainWindow):
         self._in_spin.valueChanged.connect(self._on_in_changed)
         io_row.addWidget(self._in_spin)
 
-        self._set_in_btn = QPushButton("Set IN [I]")
-        self._set_in_btn.setFixedWidth(86)
+        self._set_in_btn = QPushButton(" Set IN")
+        self._set_in_btn.setIcon(qta.icon("fa5s.sign-in-alt", color="#4CAF50"))
+        self._set_in_btn.setFixedWidth(90)
+        self._set_in_btn.setToolTip("Set IN point to current playhead [I]")
         self._set_in_btn.clicked.connect(self._set_in_from_playhead)
         io_row.addWidget(self._set_in_btn)
 
@@ -478,8 +492,10 @@ class BatchWindow(QMainWindow):
         self._out_spin.valueChanged.connect(self._on_out_changed)
         io_row.addWidget(self._out_spin)
 
-        self._set_out_btn = QPushButton("Set OUT [O]")
-        self._set_out_btn.setFixedWidth(86)
+        self._set_out_btn = QPushButton(" Set OUT")
+        self._set_out_btn.setIcon(qta.icon("fa5s.sign-out-alt", color="#f44336"))
+        self._set_out_btn.setFixedWidth(96)
+        self._set_out_btn.setToolTip("Set OUT point to current playhead [O]")
         self._set_out_btn.clicked.connect(self._set_out_from_playhead)
         io_row.addWidget(self._set_out_btn)
 
@@ -501,7 +517,7 @@ class BatchWindow(QMainWindow):
         vbox.setSpacing(6)
 
         top_row = QHBoxLayout()
-        top_lbl = QLabel("📱  Render Preview")
+        top_lbl = QLabel("9:16 Render Preview")
         top_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
         top_row.addWidget(top_lbl)
         top_row.addStretch()
@@ -555,14 +571,16 @@ class BatchWindow(QMainWindow):
 
         hbox.addSpacing(16)
 
-        self._render_btn = QPushButton("🚀  Render All")
+        self._render_btn = QPushButton(" Render All")
+        self._render_btn.setIcon(qta.icon("fa5s.bolt", color="#ffffff"))
         self._render_btn.setFixedHeight(36)
         self._render_btn.setMinimumWidth(160)
         self._render_btn.setStyleSheet("font-weight: bold; font-size: 13px; background-color: #0078d4; color: white;")
         self._render_btn.clicked.connect(self._start_render)
         hbox.addWidget(self._render_btn)
 
-        self._cancel_btn = QPushButton("⬛  Cancel")
+        self._cancel_btn = QPushButton(" Cancel")
+        self._cancel_btn.setIcon(qta.icon("fa5s.stop", color="#ffffff"))
         self._cancel_btn.setFixedHeight(36)
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._cancel_render)
@@ -717,13 +735,13 @@ class BatchWindow(QMainWindow):
     def _sync_list_item(self, index: int):
         job = self._jobs[index]
         text = (
-            f"{job.status_icon()}  {job.display_name}\n"
+            f"{job.display_name}\n"
             f"    {job.width}×{job.height}  •  {_fmt_time(job.duration)}\n"
             f"    IN {_fmt_time(job.in_time)} → OUT {_fmt_time(job.out_time)}"
             f"  ({job.clip_duration:.1f}s)"
         )
         if job.status == "error":
-            text += f"\n    ❌ {job.error_msg[:80]}"
+            text += f"\n    ✕ {job.error_msg[:80]}"
 
         if index < self._job_list.count():
             item = self._job_list.item(index)
@@ -732,6 +750,8 @@ class BatchWindow(QMainWindow):
             item = QListWidgetItem(text)
             item.setSizeHint(QSize(0, 74))
             self._job_list.addItem(item)
+
+        item.setIcon(job.status_qicon())
 
         palette = {
             "ready": QColor(220, 220, 220),
@@ -932,13 +952,15 @@ class BatchWindow(QMainWindow):
         if self._capture is None or self._active_index < 0:
             return
         self._playing = True
-        self._play_btn.setText("⏸  Pause")
+        self._play_btn.setText(" Pause")
+        self._play_btn.setIcon(qta.icon("fa5s.pause", color="#e0e0e0"))
         self._play_timer.start()
 
     def _stop_play(self):
         self._playing = False
         self._play_timer.stop()
-        self._play_btn.setText("▶  Play")
+        self._play_btn.setText(" Play")
+        self._play_btn.setIcon(qta.icon("fa5s.play", color="#e0e0e0"))
 
     def _play_tick(self):
         if self._capture is None or self._active_index < 0:
@@ -1095,14 +1117,14 @@ class BatchWindow(QMainWindow):
 
         if errors == 0:
             QMessageBox.information(
-                self, "Batch Complete 🎉",
+                self, "Batch Complete",
                 f"All {done} clip(s) rendered successfully!\n\n"
                 f"Outputs are in each video's  exports/  folder.",
             )
         else:
             QMessageBox.warning(
                 self, "Batch Complete",
-                f"Done: {done} ✅   Failed: {errors} ❌\n\n"
+                f"Done: {done}   Failed: {errors}\n\n"
                 "Check the queue list for error details.",
             )
 
@@ -1177,9 +1199,10 @@ class BatchWindow(QMainWindow):
         ready = sum(1 for j in self._jobs if j.status in ("ready", "error"))
         self._render_btn.setEnabled(ready > 0 and not busy)
         self._render_btn.setText(
-            f"🚀  Render All  ({ready} clip{'s' if ready != 1 else ''})"
-            if ready else "🚀  Render All"
+            f" Render All ({ready} clip{'s' if ready != 1 else ''})"
+            if ready else " Render All"
         )
+        self._render_btn.setIcon(qta.icon("fa5s.bolt", color="#ffffff"))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

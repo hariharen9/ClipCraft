@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import qtawesome as qta
 from PySide6.QtCore import Qt, QRectF, QSize, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -16,31 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 def _make_eye_icon(visible: bool, size: int = 16) -> QIcon:
-    """Generate a clean vector eye icon (no cheap emojis)."""
-    pm = QPixmap(size, size)
-    pm.fill(QColor(0, 0, 0, 0))
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    color = QColor(220, 222, 230) if visible else QColor(110, 112, 122)
-    p.setPen(QPen(color, 1.3))
-
-    path = QPainterPath()
-    path.moveTo(2.0, size / 2.0)
-    path.quadTo(size / 2.0, 3.0, size - 2.0, size / 2.0)
-    path.quadTo(size / 2.0, size - 3.0, 2.0, size / 2.0)
-    p.drawPath(path)
-
+    """Generate a clean vector eye icon via QtAwesome."""
     if visible:
-        p.setBrush(color)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawEllipse(QRectF(size / 2.0 - 2.2, size / 2.0 - 2.2, 4.4, 4.4))
-    else:
-        p.setPen(QPen(QColor(230, 80, 80), 1.6))
-        p.drawLine(3, size - 3, size - 3, 3)
-
-    p.end()
-    return QIcon(pm)
+        return qta.icon("fa5s.eye", color="#dcdee6")
+    return qta.icon("fa5s.eye-slash", color="#e06c75")
 
 
 class LayerStackWidget(QWidget):
@@ -75,29 +55,33 @@ class LayerStackWidget(QWidget):
         # Move Up / Down helper buttons, Add Text, Delete
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
-        self.up_button = QPushButton("▲ Forward")
+        self.up_button = QPushButton(" Forward")
+        self.up_button.setIcon(qta.icon("fa5s.arrow-up", color="#dcdee6"))
         self.up_button.setFixedHeight(24)
         self.up_button.setStyleSheet("font-size: 11px;")
         self.up_button.setToolTip("Move layer up in stack (closer to front)")
         self.up_button.clicked.connect(self.move_selected_up)
         btn_row.addWidget(self.up_button)
 
-        self.down_button = QPushButton("▼ Backward")
+        self.down_button = QPushButton(" Backward")
+        self.down_button.setIcon(qta.icon("fa5s.arrow-down", color="#dcdee6"))
         self.down_button.setFixedHeight(24)
         self.down_button.setStyleSheet("font-size: 11px;")
         self.down_button.setToolTip("Move layer down in stack (closer to back)")
         self.down_button.clicked.connect(self.move_selected_down)
         btn_row.addWidget(self.down_button)
 
-        self.add_text_button = QPushButton("＋ Text")
+        self.add_text_button = QPushButton(" Text")
+        self.add_text_button.setIcon(qta.icon("fa5s.font", color="#e5c07b"))
         self.add_text_button.setFixedHeight(24)
         self.add_text_button.setStyleSheet("font-size: 11px; font-weight: bold; color: #e5c07b;")
         self.add_text_button.setToolTip("Add a new editable text layer to this template")
         self.add_text_button.clicked.connect(self.add_text_requested.emit)
         btn_row.addWidget(self.add_text_button)
 
-        self.delete_button = QPushButton("🗑")
-        self.delete_button.setFixedSize(24, 24)
+        self.delete_button = QPushButton("")
+        self.delete_button.setIcon(qta.icon("fa5s.trash-alt", color="#e06c75"))
+        self.delete_button.setFixedSize(26, 24)
         self.delete_button.setStyleSheet("font-size: 11px;")
         self.delete_button.setToolTip("Delete selected layer")
         self.delete_button.clicked.connect(self._on_delete_clicked)

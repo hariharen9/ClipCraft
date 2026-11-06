@@ -4,6 +4,7 @@ from typing import Callable, Any
 
 import cv2
 import numpy as np
+import qtawesome as qta
 from PySide6.QtCore import Qt, QPointF, QRectF, QSize, QTimer
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -202,15 +203,18 @@ class VisualSourceCropDialog(QDialog):
         bottom_row.addWidget(self.info_lbl)
         bottom_row.addStretch(1)
 
-        full_btn = QPushButton("Reset Full Frame")
+        full_btn = QPushButton(" Reset Full Frame")
+        full_btn.setIcon(qta.icon("fa5s.expand", color="#dcdcdc"))
         full_btn.clicked.connect(self._reset_full)
         bottom_row.addWidget(full_btn)
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(" Cancel")
+        cancel_btn.setIcon(qta.icon("fa5s.times", color="#dcdcdc"))
         cancel_btn.clicked.connect(self.reject)
         bottom_row.addWidget(cancel_btn)
 
-        apply_btn = QPushButton("✔  Apply Crop")
+        apply_btn = QPushButton(" Apply Crop")
+        apply_btn.setIcon(qta.icon("fa5s.check", color="#ffffff"))
         apply_btn.setDefault(True)
         apply_btn.setStyleSheet("font-weight: bold; background-color: #0078d4; color: white; padding: 6px 16px;")
         apply_btn.clicked.connect(self._apply)
