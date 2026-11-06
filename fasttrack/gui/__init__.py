@@ -13,6 +13,8 @@ from .constants import (
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCropDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
+from .transport_bar import TransportWidget
+from .inspector import LayerInspectorWidget
 from .main_window import FasTrackWindow, launch_gui
 from .batch_window import (
     BatchWindow,
@@ -37,6 +39,8 @@ __all__ = [
     "LayerItem",
     "LayerStackWidget",
     "_make_eye_icon",
+    "TransportWidget",
+    "LayerInspectorWidget",
     "VisualCropHandleItem",
     "VisualCropBoxItem",
     "VisualSourceCropDialog",

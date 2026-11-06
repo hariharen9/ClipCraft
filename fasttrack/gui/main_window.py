@@ -91,6 +91,8 @@ from .constants import (
 )
 from .crop_dialog import VisualSourceCropDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
+from .transport_bar import TransportWidget
+from .inspector import LayerInspectorWidget
 from .worker import RenderWorker
 
 class FasTrackWindow(QMainWindow):
@@ -226,69 +228,32 @@ class FasTrackWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 4, 0)
 
-        trim_group = QGroupBox("Clip selection")
-        trim_layout = QVBoxLayout(trim_group)
-        self.frame_label = QLabel("00:00.000 / 00:00.000")
-        self.frame_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        trim_layout.addWidget(self.frame_label)
-        self.position_slider = QSlider(Qt.Orientation.Horizontal)
-        self.position_slider.setRange(0, 10000)
-        self.position_slider.valueChanged.connect(self._position_changed)
-        self.position_slider.sliderPressed.connect(self._start_scrub)
-        self.position_slider.sliderReleased.connect(self._finish_scrub)
-        trim_layout.addWidget(self.position_slider)
-        play_row = QHBoxLayout()
-        self.play_button = QPushButton(" Play")
-        self.play_button.setIcon(qta.icon("fa5s.play", color="#ffffff"))
-        self.play_button.clicked.connect(self.toggle_play)
-        play_row.addWidget(self.play_button)
-        self.step_back_button = QPushButton(" Frame")
-        self.step_back_button.setIcon(qta.icon("fa5s.step-backward", color="#dcdcdc"))
-        self.step_back_button.setToolTip("Back 1 frame (Left arrow; Shift = 1 second)")
-        self.step_back_button.clicked.connect(self._step_back)
-        play_row.addWidget(self.step_back_button)
-        self.step_fwd_button = QPushButton(" Frame")
-        self.step_fwd_button.setIcon(qta.icon("fa5s.step-forward", color="#dcdcdc"))
-        self.step_fwd_button.setToolTip("Forward 1 frame (Right arrow; Shift = 1 second)")
-        self.step_fwd_button.clicked.connect(self._step_forward)
-        play_row.addWidget(self.step_fwd_button)
-        trim_layout.addLayout(play_row)
-        io_row = QHBoxLayout()
-        self.set_in_button = QPushButton(" Set IN")
-        self.set_in_button.setIcon(qta.icon("fa5s.sign-in-alt", color="#4CAF50"))
-        self.set_in_button.clicked.connect(self.set_in_from_playhead)
-        io_row.addWidget(self.set_in_button)
-        self.set_out_button = QPushButton(" Set OUT")
-        self.set_out_button.setIcon(qta.icon("fa5s.sign-out-alt", color="#f44336"))
-        self.set_out_button.clicked.connect(self.set_out_from_playhead)
-        io_row.addWidget(self.set_out_button)
-        trim_layout.addLayout(io_row)
-        speed_row = QHBoxLayout()
-        speed_row.addWidget(QLabel("Speed"))
-        self.speed_combo = QComboBox()
-        for speed_label, speed_value in (("0.25×", 0.25), ("0.5×", 0.5), ("1×", 1.0), ("2×", 2.0), ("4×", 4.0)):
-            self.speed_combo.addItem(speed_label, speed_value)
-        self.speed_combo.setCurrentIndex(2)
-        self.speed_combo.currentIndexChanged.connect(self._speed_changed)
-        speed_row.addWidget(self.speed_combo)
-        speed_row.addStretch(1)
-        trim_layout.addLayout(speed_row)
-        trim_form = QFormLayout()
-        self.in_spin = QDoubleSpinBox()
-        self.out_spin = QDoubleSpinBox()
-        for spin in (self.in_spin, self.out_spin):
-            spin.setRange(0, 24 * 60 * 60)
-            spin.setDecimals(3)
-            spin.setSingleStep(0.25)
-            spin.setSuffix(" s")
+        self.transport = TransportWidget()
+        self.frame_label = self.transport.frame_label
+        self.position_slider = self.transport.position_slider
+        self.play_button = self.transport.play_button
+        self.step_back_button = self.transport.step_back_button
+        self.step_fwd_button = self.transport.step_fwd_button
+        self.set_in_button = self.transport.set_in_button
+        self.set_out_button = self.transport.set_out_button
+        self.speed_combo = self.transport.speed_combo
+        self.in_spin = self.transport.in_spin
+        self.out_spin = self.transport.out_spin
+
+        self.transport.play_toggled.connect(self.toggle_play)
+        self.transport.step_back_requested.connect(self._step_back)
+        self.transport.step_forward_requested.connect(self._step_forward)
+        self.transport.set_in_requested.connect(self.set_in_from_playhead)
+        self.transport.set_out_requested.connect(self.set_out_from_playhead)
+        self.transport.position_changed.connect(self._position_changed)
+        self.transport.scrub_started.connect(self._start_scrub)
+        self.transport.scrub_finished.connect(self._finish_scrub)
+        self.transport.speed_changed.connect(self._speed_changed)
+        self.transport.in_out_changed.connect(self._on_in_out_changed)
         self.in_spin.valueChanged.connect(self._validate_trim)
         self.out_spin.valueChanged.connect(self._validate_trim)
-        self.in_spin.valueChanged.connect(self._on_in_out_changed)
-        self.out_spin.valueChanged.connect(self._on_in_out_changed)
-        trim_form.addRow("IN point", self.in_spin)
-        trim_form.addRow("OUT point", self.out_spin)
-        trim_layout.addLayout(trim_form)
-        layout.addWidget(trim_group)
+
+        layout.addWidget(self.transport)
 
         bg_group = QGroupBox("Background look")
         bg_form = QFormLayout(bg_group)
@@ -451,193 +416,61 @@ class FasTrackWindow(QMainWindow):
         return panel
 
     def _build_inspector_panel(self) -> QWidget:
-        panel = QWidget()
-        panel.setMinimumWidth(300)
-        panel.setMaximumWidth(400)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(4, 0, 0, 0)
-        layer_group = QGroupBox("Layer editor")
-        layer_layout = QVBoxLayout(layer_group)
-        self.layer_stack = LayerStackWidget()
-        self.layer_stack.layer_selected.connect(self._on_stack_layer_selected)
-        self.layer_stack.visibility_toggled.connect(self._on_stack_visibility_toggled)
-        self.layer_stack.reordered.connect(self._on_stack_reordered)
-        self.layer_stack.add_text_requested.connect(self._add_text_layer)
-        self.layer_stack.delete_layer_requested.connect(self._delete_layer)
-        layer_layout.addWidget(self.layer_stack)
-        vis_opacity_row = QHBoxLayout()
-        self.visible_check = QCheckBox("Visible")
+        self.inspector = LayerInspectorWidget()
+
+        # Direct attribute references for seamless backwards compatibility
+        self.layer_stack = self.inspector.layer_stack
+        self.visible_check = self.inspector.visible_check
+        self.opacity_slider = self.inspector.opacity_slider
+        self.opacity_label = self.inspector.opacity_label
+        self.text_group = self.inspector.text_group
+        self.text_content_edit = self.inspector.text_content_edit
+        self.font_combo = self.inspector.font_combo
+        self.font_size_spin = self.inspector.font_size_spin
+        self.font_bold_check = self.inspector.font_bold_check
+        self.text_color_btn = self.inspector.text_color_btn
+        self.stroke_color_btn = self.inspector.stroke_color_btn
+        self.stroke_width_spin = self.inspector.stroke_width_spin
+        self.text_align_combo = self.inspector.text_align_combo
+        self.asset_group = self.inspector.asset_group
+        self.asset_edit = self.inspector.asset_edit
+        self.asset_button = self.inspector.asset_button
+        self.geom_fields = self.inspector.geom_fields
+        self.snap_aspect_button = self.inspector.snap_aspect_button
+        self.crop_fields = self.inspector.crop_fields
+        self.visual_crop_button = self.inspector.visual_crop_button
+        self.reset_crop_button = self.inspector.reset_crop_button
+        self.undo_button = self.inspector.undo_button
+        self.redo_button = self.inspector.redo_button
+
+        # Connect inspector signals
+        self.inspector.layer_selected.connect(self._on_stack_layer_selected)
+        self.inspector.visibility_toggled.connect(self._on_stack_visibility_toggled)
+        self.inspector.reordered.connect(self._on_stack_reordered)
+        self.inspector.add_text_requested.connect(self._add_text_layer)
+        self.inspector.delete_layer_requested.connect(self._delete_layer)
         self.visible_check.stateChanged.connect(self.toggle_layer_visible)
-        vis_opacity_row.addWidget(self.visible_check)
-        vis_opacity_row.addSpacing(10)
-        vis_opacity_row.addWidget(QLabel("Opacity"))
-        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setValue(100)
-        self.opacity_slider.sliderPressed.connect(self._opacity_slider_pressed)
-        self.opacity_slider.sliderReleased.connect(self._opacity_slider_released)
-        self.opacity_slider.valueChanged.connect(self._opacity_slider_changed)
-        vis_opacity_row.addWidget(self.opacity_slider, 1)
-        self.opacity_label = QLabel("100%")
-        self.opacity_label.setMinimumWidth(38)
-        self.opacity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        vis_opacity_row.addWidget(self.opacity_label)
-        layer_layout.addLayout(vis_opacity_row)
+        self.inspector.opacity_pressed.connect(self._opacity_slider_pressed)
+        self.inspector.opacity_released.connect(self._opacity_slider_released)
+        self.inspector.opacity_changed.connect(self._opacity_slider_changed)
+        self.inspector.text_content_edited.connect(self._on_text_content_edited)
+        self.inspector.text_prop_changed.connect(self._on_text_prop_changed)
+        self.inspector.text_color_clicked.connect(self._choose_text_color)
+        self.inspector.stroke_color_clicked.connect(self._choose_stroke_color)
+        self.inspector.browse_asset_clicked.connect(self.browse_asset)
+        self.inspector.snap_aspect_clicked.connect(self.snap_image_aspect)
+        self.inspector.geometry_value_changed.connect(self._update_active_layer_geometry)
+        self.inspector.geometry_editing_finished.connect(self._commit_pending_undo)
+        self.inspector.crop_value_changed.connect(self._update_active_layer_crop)
+        self.inspector.crop_editing_finished.connect(self._commit_pending_undo)
+        self.inspector.visual_crop_clicked.connect(self.open_visual_crop_dialog)
+        self.inspector.reset_crop_clicked.connect(self.reset_crop_to_default)
+        self.inspector.undo_clicked.connect(self.undo)
+        self.inspector.redo_clicked.connect(self.redo)
+        self.inspector.save_layout_clicked.connect(self.save_layout)
+        self.inspector.reset_layout_clicked.connect(self.reset_layout)
 
-        # -- Text Properties (#17) ---------------------------------------------
-        self.text_group = QGroupBox("Text properties")
-        text_layout = QVBoxLayout(self.text_group)
-        text_layout.setContentsMargins(6, 4, 6, 6)
-        text_layout.setSpacing(5)
-
-        self.text_content_edit = QLineEdit()
-        self.text_content_edit.setPlaceholderText("Enter text…")
-        self.text_content_edit.textEdited.connect(self._on_text_content_edited)
-        self.text_content_edit.editingFinished.connect(self._commit_pending_undo)
-        text_layout.addWidget(self.text_content_edit)
-
-        font_row = QHBoxLayout()
-        self.font_combo = QComboBox()
-        self.font_combo.addItems([
-            "Impact", "Arial", "Segoe UI", "Calibri", "Verdana",
-            "Tahoma", "Trebuchet MS", "Comic Sans MS", "Times New Roman", "Courier New"
-        ])
-        self.font_combo.currentIndexChanged.connect(self._on_text_prop_changed)
-        font_row.addWidget(self.font_combo, 1)
-
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(8, 300)
-        self.font_size_spin.setValue(48)
-        self.font_size_spin.setSuffix(" pt")
-        self.font_size_spin.valueChanged.connect(self._on_text_prop_changed)
-        font_row.addWidget(self.font_size_spin)
-
-        self.font_bold_check = QCheckBox("Bold")
-        self.font_bold_check.setChecked(True)
-        self.font_bold_check.stateChanged.connect(self._on_text_prop_changed)
-        font_row.addWidget(self.font_bold_check)
-        text_layout.addLayout(font_row)
-
-        style_row = QHBoxLayout()
-        self.text_color_btn = QPushButton(" Color")
-        self.text_color_btn.setIcon(qta.icon("mdi6.palette", color="#ffffff"))
-        self.text_color_btn.setFixedHeight(24)
-        self.text_color_btn.clicked.connect(self._choose_text_color)
-        style_row.addWidget(self.text_color_btn)
-
-        self.stroke_color_btn = QPushButton(" Stroke")
-        self.stroke_color_btn.setIcon(qta.icon("mdi6.brush", color="#ffffff"))
-        self.stroke_color_btn.setFixedHeight(24)
-        self.stroke_color_btn.clicked.connect(self._choose_stroke_color)
-        style_row.addWidget(self.stroke_color_btn)
-
-        self.stroke_width_spin = QSpinBox()
-        self.stroke_width_spin.setRange(0, 30)
-        self.stroke_width_spin.setValue(3)
-        self.stroke_width_spin.setSuffix(" px")
-        self.stroke_width_spin.valueChanged.connect(self._on_text_prop_changed)
-        style_row.addWidget(self.stroke_width_spin)
-
-        self.text_align_combo = QComboBox()
-        self.text_align_combo.addItems(["Center", "Left", "Right"])
-        self.text_align_combo.currentIndexChanged.connect(self._on_text_prop_changed)
-        style_row.addWidget(self.text_align_combo)
-        text_layout.addLayout(style_row)
-
-        layer_layout.addWidget(self.text_group)
-
-        self.asset_group = QGroupBox("Image asset")
-        asset_layout = QHBoxLayout(self.asset_group)
-        asset_layout.setContentsMargins(6, 4, 6, 4)
-        self.asset_edit = QLineEdit()
-        self.asset_edit.setReadOnly(True)
-        self.asset_edit.setPlaceholderText("No asset")
-        asset_layout.addWidget(self.asset_edit, 1)
-        self.asset_button = QPushButton(" Browse…")
-        self.asset_button.setIcon(qta.icon("mdi6.image", color="#dcdcdc"))
-        self.asset_button.setMaximumWidth(84)
-        self.asset_button.clicked.connect(self.browse_asset)
-        asset_layout.addWidget(self.asset_button)
-        layer_layout.addWidget(self.asset_group)
-
-        geometry_group = QGroupBox("Output position / size (% of canvas)")
-        geometry_inner = QVBoxLayout(geometry_group)
-        geometry_inner.setContentsMargins(6, 4, 6, 6)
-        geometry_form = QFormLayout()
-        self.geom_fields = {}
-        for key, title in (("x", "X"), ("y", "Y"), ("w", "Width"), ("h", "Height")):
-            spin = QDoubleSpinBox()
-            spin.setRange(0.1 if key in ("w", "h") else -50.0, 150.0)
-            spin.setDecimals(2)
-            spin.setSingleStep(1.0)
-            spin.setSuffix(" %")
-            spin.valueChanged.connect(self._update_active_layer_geometry)
-            spin.editingFinished.connect(self._commit_pending_undo)
-            self.geom_fields[key] = spin
-            geometry_form.addRow(title, spin)
-        geometry_inner.addLayout(geometry_form)
-        self.snap_aspect_button = QPushButton("Snap to image aspect")
-        self.snap_aspect_button.setToolTip("Fit the rectangle to the image's own aspect ratio, kept centered")
-        self.snap_aspect_button.clicked.connect(self.snap_image_aspect)
-        geometry_inner.addWidget(self.snap_aspect_button)
-        layer_layout.addWidget(geometry_group)
-
-        crop_group = QGroupBox("Source crop (% of original footage)")
-        crop_form = QFormLayout(crop_group)
-        self.crop_fields = {}
-        for key, title in (("x", "Crop X"), ("y", "Crop Y"), ("w", "Crop width"), ("h", "Crop height")):
-            spin = QDoubleSpinBox()
-            spin.setRange(0.1 if key in ("w", "h") else 0.0, 100.0)
-            spin.setDecimals(2)
-            spin.setSingleStep(1.0)
-            spin.setSuffix(" %")
-            spin.valueChanged.connect(self._update_active_layer_crop)
-            spin.editingFinished.connect(self._commit_pending_undo)
-            self.crop_fields[key] = spin
-            crop_form.addRow(title, spin)
-        crop_btn_row = QHBoxLayout()
-        self.visual_crop_button = QPushButton(" Crop visually…")
-        self.visual_crop_button.setIcon(qta.icon("mdi6.crop", color="#4daafc"))
-        self.visual_crop_button.setToolTip("Open full 16:9 source frame and crop by dragging an interactive box")
-        self.visual_crop_button.clicked.connect(self.open_visual_crop_dialog)
-        crop_btn_row.addWidget(self.visual_crop_button)
-        self.reset_crop_button = QPushButton(" Reset crop")
-        self.reset_crop_button.setIcon(qta.icon("fa5s.undo", color="#dcdcdc"))
-        self.reset_crop_button.setToolTip("Reset source crop to config defaults")
-        self.reset_crop_button.clicked.connect(self.reset_crop_to_default)
-        crop_btn_row.addWidget(self.reset_crop_button)
-        layer_layout.addWidget(crop_group)
-        layer_layout.addLayout(crop_btn_row)
-        layout.addWidget(layer_group)
-
-        actions_group = QGroupBox("Template")
-        actions_layout = QVBoxLayout(actions_group)
-        history_row = QHBoxLayout()
-        self.undo_button = QPushButton(" Undo")
-        self.undo_button.setIcon(qta.icon("fa5s.undo-alt", color="#dcdcdc"))
-        self.undo_button.setToolTip("Undo the last canvas or layout change (Ctrl+Z)")
-        self.undo_button.setEnabled(False)
-        self.undo_button.clicked.connect(self.undo)
-        self.redo_button = QPushButton(" Redo")
-        self.redo_button.setIcon(qta.icon("fa5s.redo-alt", color="#dcdcdc"))
-        self.redo_button.setToolTip("Redo an undone change (Ctrl+Shift+Z)")
-        self.redo_button.setEnabled(False)
-        self.redo_button.clicked.connect(self.redo)
-        history_row.addWidget(self.undo_button)
-        history_row.addWidget(self.redo_button)
-        actions_layout.addLayout(history_row)
-        save_button = QPushButton(" Save layout to template")
-        save_button.setIcon(qta.icon("fa5s.save", color="#dcdcdc"))
-        save_button.clicked.connect(self.save_layout)
-        actions_layout.addWidget(save_button)
-        reset_button = QPushButton(" Reset to saved layout")
-        reset_button.setIcon(qta.icon("fa5s.sync-alt", color="#dcdcdc"))
-        reset_button.clicked.connect(self.reset_layout)
-        reset_button.clicked.connect(self.reset_layout)
-        actions_layout.addWidget(reset_button)
-        layout.addWidget(actions_group)
-        layout.addStretch(1)
-        return panel
+        return self.inspector
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -865,19 +698,13 @@ class FasTrackWindow(QMainWindow):
         self._read_backlog = 0.0
         self._reverse_buffer.clear()
         self.play_timer.start()
-        if self._play_direction > 0:
-            self.play_button.setText(" Pause")
-            self.play_button.setIcon(qta.icon("fa5s.pause", color="#ffffff"))
-        else:
-            self.play_button.setText(" Rewind")
-            self.play_button.setIcon(qta.icon("fa5s.backward", color="#ffffff"))
+        self.transport.set_playing(True, self._play_direction)
 
     def _stop_playback(self) -> None:
         self._playing = False
         self._reverse_buffer.clear()  # release decoded frames promptly
         self.play_timer.stop()
-        self.play_button.setText(" Play")
-        self.play_button.setIcon(qta.icon("fa5s.play", color="#ffffff"))
+        self.transport.set_playing(False)
 
     def toggle_play(self) -> None:
         if self._playing:
