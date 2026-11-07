@@ -859,7 +859,7 @@ class BatchWindow(QMainWindow):
         self._frame_label.setPixmap(scaled)
 
     def _display_render_preview(self, frame: np.ndarray):
-        """Composes and renders the live 9:16 vertical short layout preview."""
+        """Composes and renders the live 9:16 vertical short layout preview in strict z-order."""
         pw = max(180, min(360, self._render_preview_label.width()))
         ph = max(320, int(round(pw * 16 / 9)))
         if ph > self._render_preview_label.height():
@@ -868,69 +868,51 @@ class BatchWindow(QMainWindow):
 
         # 1. Render blurred background
         comp = render_background(frame, pw, ph, self._config)
+        pix = QPixmap.fromImage(to_qimage_array(comp))
 
-        # 2. Render video layers in z-order
+        # 2. Render all layers in strict ascending z-order
         layers = self._config.get("layers", {})
-        for name, layer in sorted(layers.items(), key=lambda p: p[1].get("z", 0)):
-            if layer.get("kind") == "video" and name != "background" and layer.get("visible", True):
-                rect = layer.get("rect", [0, 0, 1, 1])
-                x = int(round(float(rect[0]) * pw))
-                y = int(round(float(rect[1]) * ph))
-                w = max(2, int(round(float(rect[2]) * pw)))
-                h = max(2, int(round(float(rect[3]) * ph)))
+        sorted_layers = sorted(
+            [p for p in layers.items() if p[0] != "background" and p[1].get("visible", True)],
+            key=lambda p: p[1].get("z", 0),
+        )
 
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        for name, layer in sorted_layers:
+            kind = layer.get("kind")
+            rect = layer.get("rect", [0, 0, 1, 1])
+            x = int(round(float(rect[0]) * pw))
+            y = int(round(float(rect[1]) * ph))
+            w = max(2, int(round(float(rect[2]) * pw)))
+            h = max(2, int(round(float(rect[3]) * ph)))
+            opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            painter.setOpacity(opacity)
+
+            if kind == "video":
                 crop = layer.get("crop", [0, 0, 1, 1])
                 cropped = normalized_crop(frame, crop)
                 fit = layer.get("fit", "cover")
                 layer_img = fit_contain(cropped, w, h) if fit == "contain" else fit_cover(cropped, w, h)
-
-                opacity = float(layer.get("opacity", 1.0))
-                # Alpha blend into composition
-                x0, y0 = max(0, x), max(0, y)
-                x1, y1 = min(pw, x + w), min(ph, y + h)
-                src_x0 = x0 - x
-                src_y0 = y0 - y
-                src_w = x1 - x0
-                src_h = y1 - y0
-
-                if src_w > 0 and src_h > 0:
-                    roi = comp[y0:y1, x0:x1]
-                    sub = layer_img[src_y0:src_y0 + src_h, src_x0:src_x0 + src_w]
-                    if opacity < 0.99:
-                        comp[y0:y1, x0:x1] = cv2.addWeighted(sub, opacity, roi, 1.0 - opacity, 0)
-                    else:
-                        comp[y0:y1, x0:x1] = sub
-
-        # Convert to QImage for PIL alpha rendering of logos/text
-        qimg = to_qimage_array(comp)
-        pix = QPixmap.fromImage(qimg)
-
-        # 3. Draw static image layers on QPainter with high quality
-        if self._cached_image_layers:
-            painter = QPainter(pix)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-            for item in self._cached_image_layers:
-                layer = item["layer"]
-                pil_img: Image.Image = item["pil_img"]
-                rect = layer.get("rect", [0, 0, 0.1, 0.1])
-                x = int(round(float(rect[0]) * pw))
-                y = int(round(float(rect[1]) * ph))
-                w = max(2, int(round(float(rect[2]) * pw)))
-                h = max(2, int(round(float(rect[3]) * ph)))
-
-                if layer.get("fit", "fill") == "contain":
-                    cw, ch = contain_fit(pil_img.width, pil_img.height, w, h)
-                    x += (w - cw) // 2
-                    y += (h - ch) // 2
-                    w, h = cw, ch
-
-                resized_pil = pil_img.resize((w, h), Image.Resampling.LANCZOS)
-                layer_qimg = to_qimage_array(np.array(resized_pil))
-                opacity = float(layer.get("opacity", 1.0))
-                painter.setOpacity(opacity)
+                layer_qimg = to_qimage_array(layer_img)
                 painter.drawImage(x, y, layer_qimg)
-            painter.end()
 
+            elif kind == "image":
+                cached = next((item for item in self._cached_image_layers if item["name"] == name), None)
+                if cached:
+                    pil_img = cached["pil_img"]
+                    draw_x, draw_y, draw_w, draw_h = x, y, w, h
+                    if layer.get("fit", "fill") == "contain":
+                        cw, ch = contain_fit(pil_img.width, pil_img.height, w, h)
+                        draw_x += (w - cw) // 2
+                        draw_y += (h - ch) // 2
+                        draw_w, draw_h = cw, ch
+                    resized_pil = pil_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
+                    layer_qimg = to_qimage_array(np.array(resized_pil))
+                    painter.drawImage(draw_x, draw_y, layer_qimg)
+
+        painter.end()
         self._render_preview_label.setPixmap(pix)
 
     def _playhead_time(self) -> float:

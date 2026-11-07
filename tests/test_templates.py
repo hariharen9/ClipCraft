@@ -52,6 +52,66 @@ class TestTemplates(unittest.TestCase):
         cloned["canvas"]["width"] = 9999
         self.assertNotEqual(cfg["canvas"]["width"], cloned["canvas"]["width"])
 
+    def test_template_assets_resolve_or_generate(self):
+        root = Path(__file__).resolve().parent.parent
+        from clipcraft.assets import ensure_assets
+        from clipcraft.config import resolve_asset
+        tmpl_dir = root / "templates"
+        for jf in tmpl_dir.glob("*.json"):
+            with self.subTest(template=jf.name):
+                cfg, p = load_config(jf)
+                ensure_assets(cfg, p)
+                for layer_name, layer in cfg.get("layers", {}).items():
+                    if layer.get("kind") == "image":
+                        asset_path = resolve_asset(p, layer.get("asset", ""))
+                        self.assertTrue(asset_path.is_file(), f"Asset for '{layer_name}' in {jf.name} not found: {asset_path}")
+
+    def test_layer_z_ordering_in_filter_complex(self):
+        from clipcraft.renderer import build_filter_complex
+        root = Path(__file__).resolve().parent.parent
+        config = {
+            "name": "CustomGame",
+            "canvas": {"width": 1080, "height": 1920, "fps": 60},
+            "background": {"blur": 10, "brightness": 0, "saturation": 1},
+            "layers": {
+                "background": {"kind": "background", "rect": [0, 0, 1, 1], "z": 0, "visible": True},
+                "under_logo": {"kind": "text", "text": "Under", "rect": [0, 0, 0.5, 0.1], "z": 5, "visible": True},
+                "main": {"kind": "video", "rect": [0, 0.2, 1, 0.6], "crop": [0, 0, 1, 1], "z": 10, "visible": True},
+                "top_title": {"kind": "text", "text": "Top", "rect": [0, 0.8, 0.5, 0.1], "z": 20, "visible": True},
+            }
+        }
+        graph, inputs = build_filter_complex(
+            config, root / "templates" / "custom.json",
+            {"duration": 10, "width": 1920, "height": 1080, "fps": 60}
+        )
+        under_idx = graph.find("[txt_under_logo]")
+        main_idx = graph.find("[lay_main]")
+        top_idx = graph.find("[txt_top_title]")
+        self.assertNotEqual(under_idx, -1)
+        self.assertNotEqual(main_idx, -1)
+        self.assertNotEqual(top_idx, -1)
+        self.assertLess(under_idx, main_idx, "Layer at z=5 should be processed before layer at z=10")
+        self.assertLess(main_idx, top_idx, "Layer at z=10 should be processed before layer at z=20")
+
+    def test_missing_main_layer_error_message(self):
+        from clipcraft.renderer import build_filter_complex
+        root = Path(__file__).resolve().parent.parent
+        config = {
+            "name": "Apex Legends",
+            "canvas": {"width": 1080, "height": 1920, "fps": 60},
+            "background": {"blur": 10, "brightness": 0, "saturation": 1},
+            "layers": {
+                "background": {"kind": "background", "rect": [0, 0, 1, 1], "z": 0, "visible": True},
+            }
+        }
+        with self.assertRaises(ValueError) as ctx:
+            build_filter_complex(
+                config, root / "templates" / "apex.json",
+                {"duration": 10, "width": 1920, "height": 1080, "fps": 60}
+            )
+        self.assertIn("Apex Legends", str(ctx.exception))
+        self.assertNotIn("Valorant", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

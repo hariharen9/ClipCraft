@@ -44,6 +44,19 @@ def make_valorant_title(path: Path) -> None:
     image.save(path)
 
 
+def make_valorant_logo(path: Path) -> None:
+    width, height = 300, 300
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    red = (255, 70, 82, 255)
+    # Angular Valorant V mark centered in 300x300
+    ox, oy = 36, 42
+    draw.polygon([(35 + ox, 28 + oy), (185 + ox, 28 + oy), (119 + ox, 154 + oy), (72 + ox, 154 + oy)], fill=red)
+    draw.polygon([(197 + ox, 28 + oy), (262 + ox, 28 + oy), (262 + ox, 109 + oy), (221 + ox, 109 + oy)], fill=red)
+    draw.polygon([(67 + ox, 171 + oy), (122 + ox, 171 + oy), (182 + ox, 218 + oy), (105 + ox, 218 + oy)], fill=red)
+    image.save(path)
+
+
 def make_socials(path: Path, youtube_handle: str, instagram_handle: str) -> None:
     image = Image.new("RGBA", (900, 210), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -101,11 +114,12 @@ def ensure_assets(config: dict, config_path: Path) -> dict[str, Path]:
     output: dict[str, Path] = {}
     defaults = {
         "valorant_title": ("assets/valorant_title.png", lambda p: make_valorant_title(p)),
+        "valo_logo": ("assets/valo_logo.png", lambda p: make_valorant_logo(p)),
         "socials": ("assets/socials.png", lambda p: make_socials(
-            p, str(branding.get("youtube_handle", "@youryoutube")),
-            str(branding.get("instagram_handle", "@yourinstagram")))),
+            p, str(branding.get("youtube_handle", "@creator")),
+            str(branding.get("instagram_handle", "@creator")))),
         "channel_logo": ("assets/channel_logo.png", lambda p: make_panda_logo(
-            p, str(branding.get("channel_name", "YOUR CHANNEL")))),
+            p, str(branding.get("channel_name", "CREATOR")))),
     }
     for layer_name, (default_rel, generator) in defaults.items():
         layer = config.get("layers", {}).get(layer_name)

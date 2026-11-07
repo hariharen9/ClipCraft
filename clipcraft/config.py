@@ -14,15 +14,14 @@ TEMPLATES_DIR = APP_DIR / "templates"
 def get_state_file() -> Path:
     """Resolve state file location.
 
-    If a local clipcraft_state.json (or legacy fasttrack_state.json) exists in the project root,
+    If a local clipcraft_state.json exists in the project root,
     it is preserved (portable mode). Otherwise, standard user directory is used:
       Windows: %LOCALAPPDATA%/ClipCraft/state.json
       macOS/Linux: ~/.config/clipcraft/state.json
     """
-    for fname in ("clipcraft_state.json", "fasttrack_state.json"):
-        local_file = APP_DIR / fname
-        if local_file.is_file():
-            return local_file
+    local_file = APP_DIR / "clipcraft_state.json"
+    if local_file.is_file():
+        return local_file
 
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")

@@ -1831,7 +1831,3 @@ def launch_gui(video_path: str | None, game: str, config_path: str | Path | None
     window = ClipCraftWindow(video_path, game, config_path)
     window.show()
     return app.exec()
-
-
-# Backward-compatibility alias
-FasTrackWindow = ClipCraftWindow

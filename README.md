@@ -31,7 +31,7 @@ Drop your recording, pick your moments, align your layout, and export crisp 60fp
 Getting started takes less than two minutes:
 
 ### 1. Setup
-Double-click **`install.bat`** in the project folder. It configures everything automatically.
+Double-click **`install.bat`** in the project folder. It installs the Python environment and verifies or installs **FFmpeg** via winget automatically. (If you don't have winget, ensure `ffmpeg` and `ffprobe` are installed on your system `PATH`).
 
 ### 2. Launch
 Double-click **`run_gui.bat`** to open the main studio editor.

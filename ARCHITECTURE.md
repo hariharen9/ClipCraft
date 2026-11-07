@@ -282,7 +282,7 @@ ClipCraft operates across three distinct coordinate domains:
 
 ### 6.1 Configuration & State Persistence (`clipcraft.config`)
 - **`get_state_file()`**: Resolves state path with portable-first precedence:
-  1. Checks if `clipcraft_state.json` or legacy `fasttrack_state.json` exists in `APP_DIR`. If found, portable mode is preserved.
+  1. Checks if `clipcraft_state.json` exists in `APP_DIR`. If found, portable mode is preserved.
   2. Windows fallback: `%LOCALAPPDATA%/ClipCraft/state.json` or `%APPDATA%/ClipCraft/state.json`.
   3. POSIX fallback: `$XDG_CONFIG_HOME/clipcraft/state.json` or `~/.config/clipcraft/state.json`.
 - **`save_config()` / `save_state()`**:
@@ -298,6 +298,7 @@ ClipCraft operates across three distinct coordinate domains:
 ### 6.2 Asset Generation Engine (`clipcraft.assets`)
 If referenced assets do not exist, `ensure_assets()` procedurally synthesizes starter assets using Pillow:
 - `make_valorant_title()`: Renders angular Valorant "V" polygon and title text.
+- `make_valorant_logo()`: Synthesizes red angular V emblem icon with border and drop-shadow.
 - `make_socials()`: Generates YouTube red pill and Instagram magenta rounded camera with handles.
 - `make_panda_logo()`: Synthesizes high-res glowing mascot graphic with Gaussian blurred glow.
 
@@ -320,21 +321,12 @@ Extracts `duration`, `width`, `height`, calculated `fps` (`num / den`), codec, a
    - Cropped, blurred via `boxblur=blur:2`.
    - Color graded via `eq=brightness=...:saturation=...`.
    - Scaled back up to $1080 \times 1920$ output.
-3. **Video Layers (`vsrc1..N`)**:
-   - Normalized crop converted to FFmpeg dynamic expressions:
-     ```
-     crop=w='iw*0.268623':h='ih*0.138821':x='iw*0.731377':y='ih*0.064194'
-     ```
-   - Scaled via `force_original_aspect_ratio=increase,crop=W:H` (`cover`) or `decrease,pad=...` (`contain`).
-   - Opacity adjusted via `colorchannelmixer=aa=opacity`.
-   - Overlaid onto composition:
-     ```
-     [current][layer]overlay=X:Y:eof_action=pass:shortest=1[next]
-     ```
-4. **Overlay Inputs (Images & Text)**:
-   - Images: Alpha padded regions are cropped via `crop=W:H:X:Y`, scaled with optional aspect contain, and overlaid.
-   - Text: Pre-rendered to high-res temporary PNGs via `preview.render_text_image()`, added as loop inputs (`-loop 1 -framerate 60 -i temp.png`), and overlaid.
-5. **Color Format Finalization**:
+3. **Unified Z-Order Compositing Pass**:
+   - All visible non-background layers (`video`, `image`, `text`) are sorted strictly by ascending `z`-index and composited onto `comp{idx}` in a single sequential chain, guaranteeing visual parity with the preview canvas.
+   - **Video Layers**: Cropped, scaled (`cover` / `contain`), opacity adjusted via `colorchannelmixer`, and overlaid onto `comp{idx}`.
+   - **Image Layers**: Alpha padded regions cropped via `crop=W:H:X:Y`, scaled with optional aspect contain, and overlaid.
+   - **Text Layers**: Pre-rendered to high-res temporary PNGs via `preview.render_text_image()`, added as loop inputs (`-loop 1 -framerate 60 -i temp.png`), and overlaid.
+4. **Color Format Finalization**:
    - Appends `format=yuv420p[outv]` for universal mobile player compatibility.
 
 #### Encoder Selection & Subprocess Execution (`run_render`)
@@ -490,6 +482,5 @@ Run the entire automated test suite:
 2. **Even Canvas Dimensions**: Always enforce that output canvas width and height are even integers (`width % 2 == 0`, `height % 2 == 0`). Odd dimensions will cause FFmpeg `yuv420p` encoding to fail.
 3. **Playback Performance**: In `main_window.py`, never call `refresh_canvas()` during playback ticks. Only update video layer pixmaps and background via `_update_frame_layers()`.
 4. **State Persistence**: Always use `save_state()` and `save_config()` from `clipcraft.config`, which write to `.tmp` files before atomic replacement. Never write directly to target JSON files.
-5. **Backwards Compatibility**: Maintain compatibility aliases:
-   - `FasTrackWindow = ClipCraftWindow`
+5. **Backwards Compatibility**: Maintain compatibility shims when restructuring:
    - `clipcraft.batch_gui` shim for `clipcraft.gui.batch_window`.

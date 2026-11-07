@@ -16,9 +16,9 @@
     "saturation": 1.19
   },
   "branding": {
-    "youtube_handle": "@thisisbadpanda",
-    "instagram_handle": "@badpandaplays",
-    "channel_name": "BADPANDA"
+    "channel_name": "CREATOR",
+    "youtube_handle": "@creator",
+    "instagram_handle": "@creator"
   },
   "layers": {
     "background": {
@@ -88,7 +88,7 @@
     },
     "valorant_title": {
       "kind": "image",
-      "asset": "D:/YOUTUBE/BadPanda/Badpanda pics/valo-name-logo.png",
+      "asset": "assets/valorant_title.png",
       "rect": [
         0.19468258288577364,
         0.056605530185656505,
@@ -101,7 +101,7 @@
     },
     "valo_logo": {
       "kind": "image",
-      "asset": "D:/YOUTUBE/BadPanda/Badpanda pics/valo-logo.png",
+      "asset": "assets/valo_logo.png",
       "rect": [
         0.13203583321638368,
         0.1471031857084724,
@@ -114,7 +114,7 @@
     },
     "socials": {
       "kind": "image",
-      "asset": "D:/YOUTUBE/BadPanda/Badpanda pics/Neon Gamer Social Media Panels-1.png",
+      "asset": "assets/socials.png",
       "rect": [
         0.05163089635829716,
         0.831904181845957,
@@ -127,7 +127,7 @@
     },
     "channel_logo": {
       "kind": "image",
-      "asset": "D:/YOUTUBE/BadPanda/Badpanda pics/face with name logo (Large).png",
+      "asset": "assets/channel_logo.png",
       "rect": [
         0.6487381247418422,
         0.7759049721189593,

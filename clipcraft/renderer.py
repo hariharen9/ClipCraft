@@ -97,13 +97,23 @@ def build_filter_complex(
     fps = int(canvas.get("fps", 60))
     layers = config.get("layers", {})
     background = config.get("background", {})
-    video_names = [
-        name for name, layer in sorted(layers.items(), key=lambda pair: pair[1].get("z", 0))
-        if layer.get("kind") == "video" and layer.get("visible", True)
-    ]
-    if "main" not in video_names:
-        raise ValueError("Valorant template needs a visible 'main' video layer")
-    split_labels = [f"vsrc{i}" for i in range(len(video_names) + 1)]
+    template_name = str(config.get("name") or "selected")
+
+    # Filter all visible non-background layers and sort in strict ascending z-order
+    sorted_layers = sorted(
+        [
+            (name, layer)
+            for name, layer in layers.items()
+            if name != "background" and layer.get("visible", True)
+        ],
+        key=lambda pair: pair[1].get("z", 0),
+    )
+
+    video_layers = [(name, layer) for name, layer in sorted_layers if layer.get("kind") == "video"]
+    if "main" not in [name for name, _ in video_layers]:
+        raise ValueError(f"Template '{template_name}' needs a visible 'main' video layer")
+
+    split_labels = [f"vsrc{i}" for i in range(len(video_layers) + 1)]
     split_outputs = "".join(f"[{label}]" for label in split_labels)
     parts = [f"[0:v]fps={fps},split={len(split_labels)}{split_outputs}"]
 
@@ -117,50 +127,43 @@ def build_filter_complex(
         f"eq=brightness={bg_brightness:.4f}:saturation={bg_saturation:.4f},"
         f"scale={out_w}:{out_h}[base0]"
     )
-    current = "base0"
-    source_index = 1
-    for index, name in enumerate(video_names, start=1):
-        layer = layers[name]
-        if name == "background":
-            continue
-        x, y, w, h = _rect_pixels(layer.get("rect", [0, 0, 1, 1]), out_w, out_h)
-        crop = layer.get("crop", [0, 0, 1, 1])
-        crop_filter = _crop_expr(crop)
-        fit = layer.get("fit", "cover")
-        if fit == "contain":
-            filter_body = (
-                f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=decrease,"
-                f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
-            )
-        else:
-            filter_body = f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
-        opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
-        if opacity < 0.9999:
-            filter_body += f",format=rgba,colorchannelmixer=aa={opacity:.4f}"
-        label = f"lay_{name}"
-        parts.append(f"[vsrc{index}]{filter_body}[{label}]")
-        next_label = f"comp{index}"
-        parts.append(f"[{current}][{label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
-        current = next_label
 
+    current = "base0"
+    vsrc_map = {name: f"vsrc{i}" for i, (name, _) in enumerate(video_layers, start=1)}
     overlay_inputs: list[Path] = []
-    input_index = 1
-    overlay_names = [
-        name for name, layer in sorted(layers.items(), key=lambda pair: pair[1].get("z", 0))
-        if layer.get("kind") in ("image", "text") and layer.get("visible", True)
-    ]
-    # Overlay inputs (images, rendered text) are added after the source clip
-    for overlay_number, name in enumerate(overlay_names):
-        layer = layers[name]
+    input_index = 1  # Input 0 is the source video
+
+    # Single pass over all layers sorted strictly by z across all kinds
+    for step_idx, (name, layer) in enumerate(sorted_layers, start=1):
         kind = layer.get("kind")
         x, y, w, h = _rect_pixels(layer.get("rect", [0, 0, 0.1, 0.1]), out_w, out_h)
         opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
-        if kind == "image":
+
+        if kind == "video":
+            vsrc_label = vsrc_map[name]
+            crop = layer.get("crop", [0, 0, 1, 1])
+            crop_filter = _crop_expr(crop)
+            fit = layer.get("fit", "cover")
+            if fit == "contain":
+                filter_body = (
+                    f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                    f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"
+                )
+            else:
+                filter_body = f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+            if opacity < 0.9999:
+                filter_body += f",format=rgba,colorchannelmixer=aa={opacity:.4f}"
+            label = f"lay_{name}"
+            parts.append(f"[{vsrc_label}]{filter_body}[{label}]")
+            next_label = f"comp{step_idx}"
+            parts.append(f"[{current}][{label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
+            current = next_label
+
+        elif kind == "image":
             asset = resolve_asset(config_path, layer.get("asset", ""))
             if not asset.is_file():
                 raise FileNotFoundError(f"Asset for layer '{name}' not found: {asset}")
             overlay_inputs.append(asset)
-            # Transparent padding is trimmed so the visible content defines shape and aspect.
             native_w, native_h, bbox = image_content_info(asset)
             source_w, source_h = native_w, native_h
             trim = ""
@@ -168,22 +171,21 @@ def build_filter_complex(
                 source_w, source_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 trim = f"crop={source_w}:{source_h}:{bbox[0]}:{bbox[1]},"
             if layer.get("fit", "fill") == "contain":
-                # Opt-in: keep the asset's original aspect ratio, centered inside the rectangle.
                 draw_w, draw_h = contain_fit(source_w, source_h, w, h)
                 draw_x = x + (w - draw_w) // 2
                 draw_y = y + (h - draw_h) // 2
             else:
-                # Free transform: the picture fills its rectangle exactly, as arranged in the editor.
                 draw_w, draw_h, draw_x, draw_y = w, h, x, y
             image_label = f"img_{name}"
             parts.append(
                 f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"
                 f"colorchannelmixer=aa={opacity:.4f}[{image_label}]"
             )
-            next_label = f"comp_ovr{overlay_number}"
+            next_label = f"comp{step_idx}"
             parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
             current = next_label
             input_index += 1
+
         elif kind == "text":
             text = str(layer.get("text", "Text Layer"))
             font_family = str(layer.get("font", "Arial"))
@@ -212,10 +214,13 @@ def build_filter_complex(
                 f"[{input_index}:v]format=rgba,scale={w}:{h},"
                 f"colorchannelmixer=aa={opacity:.4f}[{text_label}]"
             )
-            next_label = f"comp_ovr{overlay_number}"
+            next_label = f"comp{step_idx}"
             parts.append(f"[{current}][{text_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
             current = next_label
             input_index += 1
+
+    parts.append(f"[{current}]format=yuv420p[outv]")
+    return ";".join(parts), overlay_inputs
 
     parts.append(f"[{current}]format=yuv420p[outv]")
     return ";".join(parts), overlay_inputs

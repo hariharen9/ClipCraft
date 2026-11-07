@@ -6,7 +6,6 @@ from PySide6.QtWidgets import QApplication
 
 from clipcraft.gui import (
     ClipCraftWindow,
-    FasTrackWindow,
     BatchWindow,
     TransportWidget,
     LayerInspectorWidget,
@@ -59,9 +58,6 @@ class TestGuiSmoke(unittest.TestCase):
         win.layer_stack.list_widget.setCurrentRow(0)
         active = win._active_layer_name()
         self.assertIsNotNone(active)
-
-        # Verify backward-compatibility alias
-        self.assertIs(FasTrackWindow, ClipCraftWindow)
 
     def test_batch_window_instantiation(self):
         batch = BatchWindow("valorant")
