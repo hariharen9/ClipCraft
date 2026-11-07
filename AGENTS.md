@@ -369,18 +369,25 @@ Maintains pixel-perfect parity with FFmpeg inside Python:
 
 ### 7.1 Studio Editor (`ClipCraftWindow`)
 A 3-panel responsive layout:
-- **Left Panel**: Transport controls, background look sliders, Audio & BGM management (volume, auto-ducking, fades), export pattern settings, render presets, progress bar.
+- **Left Panel**: Transport controls, background look sliders, Sound & Music launcher card (`AudioStudioDialog`), export pattern settings, render presets, progress bar.
 - **Center Panel**: Canvas preview with `QGraphicsScene` and `QGraphicsView`, grips toggle, safe-zones toggle, sharp preview toggle.
 - **Right Panel**: Layer inspector with layer list, eye toggles, typography controls, geometry spinboxes, source crop controls, and undo/redo history.
 
-### 7.2 Playback Engine & Reverse Buffer
-To maintain smooth 60fps playback without UI freezing:
+### 7.2 Playback Engine, Live Audio & Reverse Buffer
+To maintain smooth 60fps playback with full sound synchronization:
 - Driven by a 16ms `QTimer` (`_play_tick`).
+- **Synchronized Live Audio**: Powered by dual `QMediaPlayer` + `QAudioOutput` instances (`_game_audio_player` for in-game recording audio and `_bgm_audio_player` for background music). Audio position and playback rate lock strictly to `playhead` and `_play_speed` on play, pause, seek, and loop. Shuttling backward automatically pauses audio.
 - **Selective Redraw Optimization**: On playback ticks, **only** the background pixmap and video layer pixmaps are updated via `_update_frame_layers()`. Scene items, grip handles, text layers, and image layers are never destroyed or rebuilt during playback.
 - **Shuttle Forward (`L`)**: Supports $1\times$, $2\times$, and $4\times$ playback via real-time clock pacing (`_read_backlog`).
 - **Shuttle Reverse (`J`)**: Uses `_load_reverse_batch()` to decode small batches (~0.25s of footage) into `_reverse_buffer`, allowing rapid backward playback without seeking on every single frame.
 
-### 7.3 Undo / Redo Transactional Model
+### 7.3 Audio & Music Studio (`AudioStudioDialog` in `audio_dialog.py`)
+- Dedicated modal studio for sound management, keeping the main sidepanel uncluttered.
+- **Music Trimming / Cutting**: Visual scrubber timeline with start (IN) and end (OUT) offset spinboxes to start music at specific points (e.g. beat drops) before looping.
+- **Audition Mode**: Dedicated play/pause audition player allows testing music cuts and volume balance directly in the dialog before applying.
+- **Volume & FX**: Independent sliders for BGM Volume and Gameplay Audio, Auto-Ducking toggle, and smooth boundary Fade In/Out controls.
+
+### 7.4 Undo / Redo Transactional Model
 - Manages an in-memory history of up to 100 deep-copied configuration snapshots.
 - **Continuous Input Debouncing**: Continuous interactions (dragging sliders, moving canvas layers) start an interaction via `_pending_undo` and commit via an 800ms `QTimer` debounce or upon `mouseReleaseEvent`. This ensures single undo steps rather than dozens of micro-steps.
 
@@ -443,6 +450,7 @@ To maintain smooth 60fps playback without UI freezing:
 - `ClipCraftWindow`: Primary single-clip editing studio.
 - `BatchWindow`: Multi-clip queue studio.
 - `VisualSourceCropDialog`: Full-screen 16:9 interactive crop dialog.
+- `AudioStudioDialog`: Dedicated sound, music trimming, volume, and ducking studio.
 - `LayerStackWidget`: Reorderable layer list with eye toggles.
 - `LayerInspectorWidget`: Sidebar property inspector.
 - `TransportWidget`: Scrubber and playback transport bar.

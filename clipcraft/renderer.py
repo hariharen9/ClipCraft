@@ -352,6 +352,12 @@ def build_ffmpeg_command(
     for image_path in image_inputs:
         command += ["-loop", "1", "-framerate", str(fps), "-i", str(image_path)]
     if bgm_path is not None:
+        bgm_start = max(0.0, float(effective_audio_cfg.get("bgm_start", 0.0)))
+        bgm_end = max(0.0, float(effective_audio_cfg.get("bgm_end", 0.0)))
+        if bgm_start > 0.0001:
+            command += ["-ss", f"{bgm_start:.6f}"]
+        if bgm_end > bgm_start + 0.001:
+            command += ["-to", f"{bgm_end:.6f}"]
         command += ["-stream_loop", "-1", "-i", str(bgm_path)]
 
     combined_filter = f"{graph};{audio_graph}" if audio_graph else graph

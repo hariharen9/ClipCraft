@@ -30,6 +30,8 @@ SUPPORTED_AUDIO_EXTENSIONS: set[str] = {".mp3", ".wav", ".m4a", ".aac", ".flac",
 AUDIO_DEFAULTS: dict[str, Any] = {
     "bgm_volume": 0.35,
     "gameplay_volume": 1.0,
+    "bgm_start": 0.0,
+    "bgm_end": 0.0,
     "auto_ducking": True,
     "ducking_threshold": 0.125,
     "ducking_ratio": 4.0,

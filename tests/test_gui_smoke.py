@@ -10,6 +10,7 @@ from clipcraft.gui import (
     TransportWidget,
     LayerInspectorWidget,
     VisualSourceCropDialog,
+    AudioStudioDialog,
 )
 
 
@@ -76,6 +77,31 @@ class TestGuiSmoke(unittest.TestCase):
         dlg._apply()
         self.assertEqual(len(applied), 1)
         self.assertEqual(len(applied[0]), 4)
+
+    def test_audio_studio_dialog(self):
+        cfg = {
+            "bgm_path": None,
+            "bgm_volume": 0.45,
+            "gameplay_volume": 0.85,
+            "bgm_start": 12.5,
+            "bgm_end": 45.0,
+            "auto_ducking": True,
+            "fade_in": 0.5,
+            "fade_out": 0.5,
+        }
+        dlg = AudioStudioDialog(None, audio_config=cfg, clip_duration=30.0)
+        self.assertEqual(dlg.bgm_slider.value(), 45)
+        self.assertEqual(dlg.game_slider.value(), 85)
+        self.assertAlmostEqual(dlg.bgm_start_spin.value(), 12.5)
+        self.assertAlmostEqual(dlg.bgm_end_spin.value(), 45.0)
+        self.assertTrue(dlg.ducking_check.isChecked())
+
+        res = dlg.get_audio_config()
+        self.assertEqual(res["bgm_volume"], 0.45)
+        self.assertEqual(res["gameplay_volume"], 0.85)
+        self.assertEqual(res["bgm_start"], 12.5)
+        self.assertEqual(res["bgm_end"], 45.0)
+        dlg.close()
 
 
 if __name__ == "__main__":
