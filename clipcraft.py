@@ -65,7 +65,44 @@ def default_output(video_path: Path, game: str) -> Path:
     return video_path.parent / "exports" / f"{video_path.stem}_{game}_short.mp4"
 
 
+def _log_crash(message: str, exc: BaseException | None = None) -> None:
+    """Write error/crash details to stderr and append to clipcraft.log."""
+    import datetime
+    import traceback
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    tb = traceback.format_exc() if exc is not None else ""
+    formatted = f"[{timestamp}] {message}\n"
+    if tb and tb.strip() != "NoneType: None":
+        formatted += f"{tb}\n"
+    print(formatted, file=sys.stderr, flush=True)
+    try:
+        log_file = Path(__file__).resolve().parent / "clipcraft.log"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(formatted)
+    except Exception:
+        pass
+
+
+def _setup_crash_logging() -> None:
+    """Install an excepthook to capture any unhandled crash to clipcraft.log."""
+    def _hook(exc_type, exc_value, exc_tb):
+        import datetime
+        import traceback
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        formatted = f"[{timestamp}] UNHANDLED EXCEPTION:\n{tb}\n"
+        print(formatted, file=sys.stderr, flush=True)
+        try:
+            log_file = Path(__file__).resolve().parent / "clipcraft.log"
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(formatted)
+        except Exception:
+            pass
+    sys.excepthook = _hook
+
+
 def main(argv: list[str] | None = None) -> int:
+    _setup_crash_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     game = (args.game or "").lower() or None
@@ -75,13 +112,13 @@ def main(argv: list[str] | None = None) -> int:
             from clipcraft.gui import launch_batch_gui
             return int(launch_batch_gui(game, args.config) or 0)
         except ImportError as exc:
-            print(
-                "[ClipCraft] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
-                + f"Details: {exc}", file=sys.stderr
+            _log_crash(
+                "[ClipCraft] GUI dependencies are missing. Run install.bat to install them.\n"
+                f"Details: {exc}", exc
             )
             return 2
         except Exception as exc:
-            print(f"[ClipCraft] Could not start batch UI: {exc}", file=sys.stderr)
+            _log_crash(f"[ClipCraft] Could not start batch UI: {exc}", exc)
             return 2
 
     if args.gui or not args.render and (args.in_time is None or args.out_time is None):
@@ -90,13 +127,13 @@ def main(argv: list[str] | None = None) -> int:
             from clipcraft.gui import launch_gui
             return int(launch_gui(args.video, game, args.config) or 0)
         except ImportError as exc:
-            print(
-                "[ClipCraft] GUI dependencies are missing. Run: py -m pip install -r requirements.txt\n"
-                f"Details: {exc}", file=sys.stderr
+            _log_crash(
+                "[ClipCraft] GUI dependencies are missing. Run install.bat to install them.\n"
+                f"Details: {exc}", exc
             )
             return 2
         except Exception as exc:
-            print(f"[ClipCraft] Could not start GUI: {exc}", file=sys.stderr)
+            _log_crash(f"[ClipCraft] Could not start GUI: {exc}", exc)
             return 2
 
     if not args.video:
@@ -167,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n\nDone: {rendered}")
         return 0
     except Exception as exc:
-        print(f"\n[ClipCraft] Render failed: {exc}", file=sys.stderr)
+        _log_crash(f"[ClipCraft] Render failed: {exc}", exc)
         return 1
 
 

@@ -9,11 +9,20 @@ echo.
 
 :: 1. Python virtual environment and dependencies
 echo [1/2] Setting up Python virtual environment...
-py -3.11 -m venv .venv
-if errorlevel 1 py -m venv .venv
-call .venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+if not exist "%~dp0.venv\Scripts\python.exe" (
+  py -3.11 -m venv .venv
+  if errorlevel 1 py -m venv .venv
+  if errorlevel 1 python -m venv .venv
+)
+
+if exist "%~dp0.venv\Scripts\python.exe" (
+  set "PY_BIN=%~dp0.venv\Scripts\python.exe"
+) else (
+  set "PY_BIN=python"
+)
+
+"%PY_BIN%" -m pip install --upgrade pip
+"%PY_BIN%" -m pip install -r requirements.txt
 if errorlevel 1 (
   echo.
   echo [Error] Dependency installation failed. Check your Python installation and internet connection.

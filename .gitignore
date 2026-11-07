@@ -10,3 +10,5 @@ clipcraft_state.json
 *.zip
 *.egg-info
 templates/valorant.json
+*.log
+
