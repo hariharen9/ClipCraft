@@ -21,6 +21,7 @@ Drop your recording, pick your moments, align your layout, and export crisp 60fp
 * **Instant Keyboard Trimming**: Edit at the speed of thought with classic NLE shuttle hotkeys (`J` `K` `L`, `Space`, `I` / `O`).
 * **Built-in Styled Text Overlays**: Add catchy captions, hook titles, or social handles directly inside the editor—complete with bold fonts, color pickers, and outline strokes.
 * **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **Rainbow Six Siege**, **Counter-Strike 2**, **Apex Legends**, **Call of Duty / Warzone**, **Fortnite**, **League of Legends**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
+* **Smart Audio & BGM Engine**: Drag & drop any `.mp3` or `.wav` track. Automatically ducks background music when voice callouts or gunshots peak, plus smooth 0.5s fades at clip start and end.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 
@@ -63,6 +64,12 @@ Forget entering manual pixel numbers. Opening the visual cropper displays the fu
 ### 🎨 Layer Stack & Direct Text Engine
 - **Visual Layer Hierarchy**: Drag and drop layers to bring elements forward or send them backward, with quick one-click eye toggles.
 - **Native Text Studio**: Create bold titles and watermarks on the fly without launching Photoshop. Customize font family (*Impact*, *Arial*, *Segoe UI*, etc.), font size, bold weight, fill color, outline stroke color, stroke thickness, and text alignment.
+
+### 🎵 Viral Audio & Background Music Engine
+- **Drag & Drop Music**: Simply drop any `.mp3`, `.wav`, or `.m4a` file directly onto the editor. ClipCraft loops and synchronizes it across your trimmed clip.
+- **Sidechain Auto-Ducking**: Automatically lowers the music track whenever in-game voice chat, discord callouts, or gunshot peaks occur, ensuring speech remains crystal clear.
+- **Independent Volume Control**: Set individual level sliders for background music (default 35%) and gameplay footage (default 100%).
+- **Smooth Audio Fades**: Automatic 0.5s fade-in at clip start and fade-out at clip end to prevent abrupt audio popping.
 
 ### 🛡️ Mobile Safe-Zone Overlays
 Never lose your clutch play behind a TikTok "Like" button or a YouTube Shorts caption. Toggle **Safe zones** to visualize standard mobile UI dead-zones directly over your preview in real-time.

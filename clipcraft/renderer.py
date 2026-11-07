@@ -222,8 +222,91 @@ def build_filter_complex(
     parts.append(f"[{current}]format=yuv420p[outv]")
     return ";".join(parts), overlay_inputs
 
-    parts.append(f"[{current}]format=yuv420p[outv]")
-    return ";".join(parts), overlay_inputs
+
+def build_audio_filter_graph(
+    video_info: dict[str, Any],
+    duration: float,
+    audio_config: dict[str, Any] | None = None,
+    bgm_input_index: int | None = None,
+) -> tuple[str, bool]:
+    """Build the audio filter graph for mixing, ducking, and fading.
+
+    Returns:
+        (filter_str, has_audio_stream)
+    """
+    audio_cfg = audio_config or {}
+    has_video_audio = bool(video_info.get("has_audio", False))
+    has_bgm = bgm_input_index is not None
+
+    if not has_video_audio and not has_bgm:
+        return "", False
+
+    gameplay_vol = max(0.0, float(audio_cfg.get("gameplay_volume", 1.0)))
+    bgm_vol = max(0.0, float(audio_cfg.get("bgm_volume", 0.35)))
+    auto_ducking = bool(audio_cfg.get("auto_ducking", True))
+    duck_threshold = max(0.001, min(1.0, float(audio_cfg.get("ducking_threshold", 0.125))))
+    duck_ratio = max(1.0, min(20.0, float(audio_cfg.get("ducking_ratio", 4.0))))
+    duck_attack = max(0.01, min(2000.0, float(audio_cfg.get("ducking_attack", 20.0))))
+    duck_release = max(0.01, min(9000.0, float(audio_cfg.get("ducking_release", 250.0))))
+
+    fade_in = max(0.0, float(audio_cfg.get("fade_in", 0.5)))
+    fade_out = max(0.0, float(audio_cfg.get("fade_out", 0.5)))
+    half_dur = max(0.01, duration / 2.0)
+    actual_fade_in = min(fade_in, half_dur) if fade_in > 0 else 0.0
+    actual_fade_out = min(fade_out, half_dur) if fade_out > 0 else 0.0
+
+    fade_filters: list[str] = []
+    if actual_fade_in > 0:
+        fade_filters.append(f"afade=t=in:ss=0:d={actual_fade_in:.4f}")
+    if actual_fade_out > 0:
+        fade_filters.append(f"afade=t=out:st={max(0.0, duration - actual_fade_out):.4f}:d={actual_fade_out:.4f}")
+    fade_suffix = ("," + ",".join(fade_filters)) if fade_filters else ""
+
+    parts: list[str] = []
+
+    if has_video_audio and has_bgm:
+        if auto_ducking:
+            parts.append(
+                f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+                f"volume={gameplay_vol:.4f},asplit=2[agp_mix][agp_sc]"
+            )
+            parts.append(
+                f"[{bgm_input_index}:a]aformat=channel_layouts=stereo,aresample=48000,"
+                f"volume={bgm_vol:.4f}[abgm_raw]"
+            )
+            parts.append(
+                f"[abgm_raw][agp_sc]sidechaincompress=threshold={duck_threshold:.4f}:"
+                f"ratio={duck_ratio:.2f}:attack={duck_attack:.1f}:release={duck_release:.1f}[abgm_ducked]"
+            )
+            parts.append(
+                f"[agp_mix][abgm_ducked]amix=inputs=2:duration=first:dropout_transition=2:normalize=0"
+                f"{fade_suffix}[outa]"
+            )
+        else:
+            parts.append(
+                f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+                f"volume={gameplay_vol:.4f}[agp_raw]"
+            )
+            parts.append(
+                f"[{bgm_input_index}:a]aformat=channel_layouts=stereo,aresample=48000,"
+                f"volume={bgm_vol:.4f}[abgm_raw]"
+            )
+            parts.append(
+                f"[agp_raw][abgm_raw]amix=inputs=2:duration=first:dropout_transition=2:normalize=0"
+                f"{fade_suffix}[outa]"
+            )
+    elif has_video_audio:
+        parts.append(
+            f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+            f"volume={gameplay_vol:.4f}{fade_suffix}[outa]"
+        )
+    elif has_bgm:
+        parts.append(
+            f"[{bgm_input_index}:a]aformat=channel_layouts=stereo,aresample=48000,"
+            f"volume={bgm_vol:.4f}{fade_suffix}[outa]"
+        )
+
+    return ";".join(parts), True
 
 
 def build_ffmpeg_command(
@@ -234,6 +317,7 @@ def build_ffmpeg_command(
     config: dict[str, Any],
     config_path: Path,
     encoder: str = "auto",
+    audio_config: dict[str, Any] | None = None,
 ) -> tuple[list[str], float]:
     video_path = Path(video_path).expanduser().resolve()
     output_path = Path(output_path).expanduser().resolve()
@@ -247,18 +331,47 @@ def build_ffmpeg_command(
     duration = end - start
     graph, image_inputs = build_filter_complex(config, config_path, info)
     fps = int(config.get("canvas", {}).get("fps", 60))
+
+    effective_audio_cfg = dict(config.get("audio", {}))
+    if audio_config:
+        effective_audio_cfg.update(audio_config)
+    bgm_path_raw = effective_audio_cfg.get("bgm_path")
+    bgm_path: Path | None = None
+    if bgm_path_raw:
+        candidate = Path(bgm_path_raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = config_path.parent / candidate
+        bgm_path = candidate.resolve() if candidate.is_file() else None
+
+    bgm_input_index = (1 + len(image_inputs)) if bgm_path is not None else None
+    audio_graph, has_audio = build_audio_filter_graph(
+        info, duration, effective_audio_cfg, bgm_input_index
+    )
+
     command = [find_ffmpeg(), "-hide_banner", "-y", "-loglevel", "error", "-ss", f"{start:.6f}", "-i", str(video_path)]
     for image_path in image_inputs:
         command += ["-loop", "1", "-framerate", str(fps), "-i", str(image_path)]
+    if bgm_path is not None:
+        command += ["-stream_loop", "-1", "-i", str(bgm_path)]
+
+    combined_filter = f"{graph};{audio_graph}" if audio_graph else graph
     command += [
         "-filter_complex_threads", "4",
-        "-filter_complex", graph,
-        "-map", "[outv]", "-map", "0:a?",
+        "-filter_complex", combined_filter,
+        "-map", "[outv]",
+    ]
+    if has_audio:
+        command += [
+            "-map", "[outa]",
+            "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+        ]
+    else:
+        command += ["-an"]
+
+    command += [
         "-t", f"{duration:.6f}",
         "-r", str(fps),
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-        "-af", "aresample=async=1:first_pts=0",
         "-movflags", "+faststart",
     ]
     canvas = config.get("canvas", {})
@@ -290,11 +403,12 @@ def run_render(
     config_path: Path,
     encoder: str = "auto",
     progress: ProgressCallback | None = None,
+    audio_config: dict[str, Any] | None = None,
 ) -> Path:
     output_path = Path(output_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command, duration = build_ffmpeg_command(
-        video_path, output_path, start, end, config, config_path, encoder
+        video_path, output_path, start, end, config, config_path, encoder, audio_config
     )
     active_encoder = encoder if encoder != "auto" else str(config.get("canvas", {}).get("encoder", "auto"))
     if active_encoder not in ("auto", "nvenc") and "h264_nvenc" in command:
@@ -328,7 +442,7 @@ def run_render(
             if progress:
                 progress(0.0, "NVENC unavailable; retrying with CPU encoding…")
             cpu_command, _ = build_ffmpeg_command(
-                video_path, output_path, start, end, config, config_path, "cpu"
+                video_path, output_path, start, end, config, config_path, "cpu", audio_config
             )
             code, error = launch(cpu_command)
         if code != 0:

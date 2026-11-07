@@ -25,6 +25,19 @@ RENDER_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 SUPPORTED_VIDEO_EXTENSIONS: set[str] = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+SUPPORTED_AUDIO_EXTENSIONS: set[str] = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
+
+AUDIO_DEFAULTS: dict[str, Any] = {
+    "bgm_volume": 0.35,
+    "gameplay_volume": 1.0,
+    "auto_ducking": True,
+    "ducking_threshold": 0.125,
+    "ducking_ratio": 4.0,
+    "ducking_attack": 20.0,
+    "ducking_release": 250.0,
+    "fade_in": 0.5,
+    "fade_out": 0.5,
+}
 
 
 def format_token_time(seconds: float) -> str:

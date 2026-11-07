@@ -218,12 +218,14 @@ class BatchRenderWorker(QThread):
         config: dict[str, Any],
         config_path: Path,
         encoder: str,
+        audio_config: dict[str, Any] | None = None,
     ):
         super().__init__()
         self.jobs = jobs
         self.config = config
         self.config_path = config_path
         self.encoder = encoder
+        self.audio_config = audio_config
         self._cancelled = False
 
     def cancel(self):
@@ -249,6 +251,7 @@ class BatchRenderWorker(QThread):
                     job.in_time, job.out_time,
                     cfg, self.config_path, self.encoder,
                     progress_cb,
+                    audio_config=self.audio_config,
                 )
                 done += 1
                 self.job_finished.emit(i, True, "")

@@ -80,11 +80,13 @@ from ..renderer import probe_video
 
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .constants import (
+    AUDIO_DEFAULTS,
     BG_DEFAULTS,
     BG_PRESETS,
     HANDLE_SIZE,
     MIN_LAYER_SIZE,
     RENDER_PRESETS,
+    SUPPORTED_AUDIO_EXTENSIONS,
     SUPPORTED_VIDEO_EXTENSIONS,
     format_token_time,
     _format_token_time,
@@ -132,6 +134,12 @@ class ClipCraftWindow(QMainWindow):
         self._frame_index = 0
         self._scrubbing = False
         self._reverse_buffer: list = []
+        audio_cfg = self.config.get("audio", {})
+        self.bgm_path: str | None = audio_cfg.get("bgm_path")
+        self.bgm_volume: float = float(audio_cfg.get("bgm_volume", AUDIO_DEFAULTS["bgm_volume"]))
+        self.gameplay_volume: float = float(audio_cfg.get("gameplay_volume", AUDIO_DEFAULTS["gameplay_volume"]))
+        self.auto_ducking: bool = bool(audio_cfg.get("auto_ducking", AUDIO_DEFAULTS["auto_ducking"]))
+        self.audio_fade: bool = bool(audio_cfg.get("fade_in", AUDIO_DEFAULTS["fade_in"]) > 0 or audio_cfg.get("fade_out", AUDIO_DEFAULTS["fade_out"]) > 0)
         self.preview_sharp = bool(state.get("preview_sharp", True))
         self.preview_scale = 1.5 if self.preview_sharp else 1.0
         self.worker: RenderWorker | None = None
@@ -289,6 +297,78 @@ class ClipCraftWindow(QMainWindow):
             self.bg_sliders[key] = (slider, value_label, scale, decimals)
         layout.addWidget(bg_group)
 
+        # Audio & Background Music (BGM) Engine
+        audio_group = QGroupBox("Audio & Background Music (BGM)")
+        audio_layout = QVBoxLayout(audio_group)
+
+        bgm_row = QHBoxLayout()
+        self.bgm_label = QLineEdit()
+        self.bgm_label.setReadOnly(True)
+        self.bgm_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.bgm_label.setPlaceholderText("No music track (drop or browse…)")
+        if self.bgm_path and Path(self.bgm_path).is_file():
+            self.bgm_label.setText(Path(self.bgm_path).name)
+            self.bgm_label.setToolTip(str(self.bgm_path))
+        bgm_row.addWidget(self.bgm_label, 1)
+
+        self.bgm_browse_btn = QPushButton()
+        self.bgm_browse_btn.setIcon(qta.icon("fa5s.music", color="#b0b0b0"))
+        self.bgm_browse_btn.setToolTip("Browse background music (.mp3, .wav, .m4a)")
+        self.bgm_browse_btn.setFixedWidth(32)
+        self.bgm_browse_btn.clicked.connect(self.browse_bgm)
+        bgm_row.addWidget(self.bgm_browse_btn)
+
+        self.bgm_clear_btn = QPushButton()
+        self.bgm_clear_btn.setIcon(qta.icon("fa5s.times", color="#b0b0b0"))
+        self.bgm_clear_btn.setToolTip("Remove background music track")
+        self.bgm_clear_btn.setFixedWidth(28)
+        self.bgm_clear_btn.clicked.connect(self.clear_bgm)
+        bgm_row.addWidget(self.bgm_clear_btn)
+        audio_layout.addLayout(bgm_row)
+
+        audio_form = QFormLayout()
+
+        # Music volume
+        bgm_vol_row = QHBoxLayout()
+        self.bgm_vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self.bgm_vol_slider.setRange(0, 200)
+        self.bgm_vol_slider.setValue(int(round(self.bgm_volume * 100)))
+        self.bgm_vol_val = QLabel(f"{int(round(self.bgm_volume * 100))}%")
+        self.bgm_vol_val.setMinimumWidth(40)
+        self.bgm_vol_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.bgm_vol_slider.valueChanged.connect(lambda v: self.bgm_vol_val.setText(f"{v}%"))
+        bgm_vol_row.addWidget(self.bgm_vol_slider, 1)
+        bgm_vol_row.addWidget(self.bgm_vol_val)
+        audio_form.addRow("Music Vol", bgm_vol_row)
+
+        # Game volume
+        gp_vol_row = QHBoxLayout()
+        self.gameplay_vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self.gameplay_vol_slider.setRange(0, 200)
+        self.gameplay_vol_slider.setValue(int(round(self.gameplay_volume * 100)))
+        self.gameplay_vol_val = QLabel(f"{int(round(self.gameplay_volume * 100))}%")
+        self.gameplay_vol_val.setMinimumWidth(40)
+        self.gameplay_vol_val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.gameplay_vol_slider.valueChanged.connect(lambda v: self.gameplay_vol_val.setText(f"{v}%"))
+        gp_vol_row.addWidget(self.gameplay_vol_slider, 1)
+        gp_vol_row.addWidget(self.gameplay_vol_val)
+        audio_form.addRow("Game Vol", gp_vol_row)
+        audio_layout.addLayout(audio_form)
+
+        # Ducking checkbox
+        self.ducking_check = QCheckBox("Auto-ducking (lower music when voices peak)")
+        self.ducking_check.setChecked(self.auto_ducking)
+        self.ducking_check.setToolTip("Automatically ducks background music whenever in-game voice or combat audio peaks")
+        audio_layout.addWidget(self.ducking_check)
+
+        # Fade checkbox
+        self.audio_fade_check = QCheckBox("Smooth 0.5s audio fade in / out")
+        self.audio_fade_check.setChecked(self.audio_fade)
+        self.audio_fade_check.setToolTip("Applies a smooth 0.5s fade at the start and end of the exported clip")
+        audio_layout.addWidget(self.audio_fade_check)
+
+        layout.addWidget(audio_group)
+
         render_group = QGroupBox("Render settings")
         render_layout = QVBoxLayout(render_group)
         self.output_edit = QLineEdit()
@@ -374,7 +454,13 @@ class ClipCraftWindow(QMainWindow):
         render_layout.addWidget(self.render_status)
         layout.addWidget(render_group)
         layout.addStretch(1)
-        return panel
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(panel)
+        return scroll
 
     def _build_preview_panel(self) -> QWidget:
         panel = QWidget()
@@ -475,17 +561,21 @@ class ClipCraftWindow(QMainWindow):
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-                    event.acceptProposedAction()
-                    return
+                if url.isLocalFile():
+                    ext = Path(url.toLocalFile()).suffix.lower()
+                    if ext in SUPPORTED_VIDEO_EXTENSIONS or ext in SUPPORTED_AUDIO_EXTENSIONS:
+                        event.acceptProposedAction()
+                        return
         super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
-                if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS:
-                    event.acceptProposedAction()
-                    return
+                if url.isLocalFile():
+                    ext = Path(url.toLocalFile()).suffix.lower()
+                    if ext in SUPPORTED_VIDEO_EXTENSIONS or ext in SUPPORTED_AUDIO_EXTENSIONS:
+                        event.acceptProposedAction()
+                        return
         super().dragMoveEvent(event)
 
     def dropEvent(self, event):
@@ -493,10 +583,40 @@ class ClipCraftWindow(QMainWindow):
             for url in event.mimeData().urls():
                 if url.isLocalFile():
                     path = Path(url.toLocalFile())
-                    if path.suffix.lower() in SUPPORTED_VIDEO_EXTENSIONS and path.is_file():
+                    ext = path.suffix.lower()
+                    if ext in SUPPORTED_AUDIO_EXTENSIONS and path.is_file():
+                        event.acceptProposedAction()
+                        self.set_bgm_track(str(path))
+                        return
+                    elif ext in SUPPORTED_VIDEO_EXTENSIONS and path.is_file():
                         event.acceptProposedAction()
                         self.load_video(str(path))
                         return
+        super().dropEvent(event)
+
+    def browse_bgm(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Choose background music track", self.source_dir,
+            "Audio files (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.wma);;All files (*.*)"
+        )
+        if filename:
+            self.set_bgm_track(filename)
+
+    def set_bgm_track(self, filename: str):
+        path = Path(filename).expanduser().resolve()
+        if not path.is_file():
+            QMessageBox.warning(self, "Audio not found", str(path))
+            return
+        self.bgm_path = str(path)
+        self.bgm_label.setText(path.name)
+        self.bgm_label.setToolTip(str(path))
+        self.statusBar().showMessage(f"Loaded background music: {path.name}", 4000)
+
+    def clear_bgm(self):
+        self.bgm_path = None
+        self.bgm_label.clear()
+        self.bgm_label.setToolTip("")
+        self.statusBar().showMessage("Background music removed", 3000)
         super().dropEvent(event)
 
     def browse_video(self):
@@ -1487,6 +1607,14 @@ class ClipCraftWindow(QMainWindow):
         self.config["canvas"]["height"] = self.height_spin.value()
         self.config["canvas"]["fps"] = self.fps_spin.value()
         self.config["canvas"]["quality"] = self.quality_spin.value()
+        self.config["audio"] = {
+            "bgm_path": self.bgm_path,
+            "bgm_volume": self.bgm_vol_slider.value() / 100.0,
+            "gameplay_volume": self.gameplay_vol_slider.value() / 100.0,
+            "auto_ducking": self.ducking_check.isChecked(),
+            "fade_in": 0.5 if self.audio_fade_check.isChecked() else 0.0,
+            "fade_out": 0.5 if self.audio_fade_check.isChecked() else 0.0,
+        }
 
     def start_render(self):
         if not self.video_path:
@@ -1511,7 +1639,8 @@ class ClipCraftWindow(QMainWindow):
         self.progress.setValue(0)
         self.render_status.setText("Starting FFmpeg…")
         self.worker = RenderWorker(
-            self.video_path, output, start, end, self.config, self.config_path, encoder
+            self.video_path, output, start, end, self.config, self.config_path, encoder,
+            audio_config=self.config.get("audio")
         )
         self.worker.progress_signal.connect(self._render_progress)
         self.worker.finished_signal.connect(self._render_finished)

@@ -345,10 +345,14 @@ Extracts `duration`, `width`, `height`, calculated `fps` (`num / den`), codec, a
   ```bash
   -c:v libx264 -preset medium -crf 14 -profile:v high
   ```
-- **Audio Pipeline**:
-  ```bash
-  -c:a aac -b:a 192k -ar 48000 -af aresample=async=1:first_pts=0 -movflags +faststart
-  ```
+- **Audio Pipeline (`build_audio_filter_graph`)**:
+  - Integrated directly into `-filter_complex` with dual-stream processing:
+    - Primary gameplay audio resampled and volume-adjusted (`aresample=48000:async=1:first_pts=0,volume=...`).
+    - Looped background music track (`-stream_loop -1 -i bgm.mp3`).
+    - **Sidechain Auto-Ducking**: When in-game voice chat or combat audio peaks, `sidechaincompress=threshold=0.125:ratio=4:attack=20:release=250` automatically ducks BGM volume.
+    - Mixed via `amix=inputs=2:duration=first:dropout_transition=2:normalize=0`.
+    - **Boundary Audio Fades**: Smooth 0.5s fade-in (`afade=t=in:ss=0:d=0.5`) and fade-out (`afade=t=out:st=...:d=0.5`) eliminate pop and click artifacts.
+    - Encoded via `-c:a aac -b:a 192k -ar 48000`.
 - **Execution & Fallback**:
   Runs via `subprocess.Popen` with `-progress pipe:1`. If encoder is `"auto"` and NVENC returns non-zero, it automatically restarts encoding using the CPU `libx264` pipeline.
 
