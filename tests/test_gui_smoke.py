@@ -11,6 +11,7 @@ from clipcraft.gui import (
     LayerInspectorWidget,
     VisualSourceCropDialog,
     AudioStudioDialog,
+    CaptionStudioDialog,
 )
 
 
@@ -129,6 +130,14 @@ class TestGuiSmoke(unittest.TestCase):
         dlg._start_audition()
         self.assertAlmostEqual(dlg._last_audition_pos_sec, 25.0, delta=0.2)
         dlg._stop_audition()
+        dlg.close()
+
+    def test_caption_studio_dialog_smoke(self):
+        dlg = CaptionStudioDialog(None)
+        self.assertIsNotNone(dlg.transcribe_btn)
+        self.assertIsNotNone(dlg.highlight_combo)
+        self.assertIsNotNone(dlg.pos_slider)
+        self.assertIsNotNone(dlg.table)
         dlg.close()
 
 

@@ -208,6 +208,110 @@ def layer_preview_image(
     return None, None
 
 
+def render_caption_overlay(
+    cues: list[Any],
+    playhead_sec: float,
+    canvas_w: int,
+    canvas_h: int,
+    style: Any,
+) -> tuple[np.ndarray | None, int, int]:
+    """Renders active word-by-word highlighted caption box onto a transparent RGBA image.
+
+    Returns:
+        tuple (rgba_image, draw_x, draw_y) or (None, 0, 0)
+    """
+    if not cues:
+        return None, 0, 0
+
+    # Find active cue
+    active_cue = None
+    for cue in cues:
+        if cue.start <= playhead_sec <= cue.end + 0.05:
+            active_cue = cue
+            break
+
+    if not active_cue:
+        return None, 0, 0
+
+    words = getattr(active_cue, "words", [])
+    if not words:
+        # Fallback to single cue text
+        text = active_cue.text.upper() if getattr(style, "uppercase", True) else active_cue.text
+        from .captions import CaptionWord
+        words = [CaptionWord(text, active_cue.start, active_cue.end)]
+
+    # Resolve font scaled to canvas height
+    base_size = getattr(style, "font_size", 56)
+    font_size = max(14, int(round(base_size * (canvas_h / 1920.0))))
+    font = resolve_font(getattr(style, "font_family", "Impact"), font_size, bold=True)
+    base_stroke = getattr(style, "stroke_width", 8)
+    stroke_w = max(1, int(round(base_stroke * (canvas_h / 1920.0))))
+
+    # Find active word index
+    active_word_idx = -1
+    if getattr(style, "word_highlight", True):
+        for idx, w in enumerate(words):
+            if w.start <= playhead_sec <= w.end:
+                active_word_idx = idx
+                break
+        if active_word_idx == -1:
+            if playhead_sec < words[0].start:
+                active_word_idx = 0
+            else:
+                active_word_idx = len(words) - 1
+
+    # Measure each word
+    words_data = []
+    space_box = font.getbbox(" ")
+    space_w = max(4, space_box[2] - space_box[0])
+    total_w = 0
+    max_h = 0
+
+    for idx, w in enumerate(words):
+        w_text = w.word.upper() if getattr(style, "uppercase", True) else w.word
+        bbox = font.getbbox(w_text)
+        w_w = max(1, bbox[2] - bbox[0])
+        w_h = max(1, bbox[3] - bbox[1])
+        words_data.append((w_text, w_w, w_h, idx == active_word_idx))
+        total_w += w_w
+        if idx > 0:
+            total_w += space_w
+        max_h = max(max_h, w_h)
+
+    # Pad image canvas to avoid clipping thick outline strokes
+    pad = stroke_w * 3 + 8
+    img_w = total_w + pad * 2
+    img_h = max_h + pad * 2
+
+    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    curr_x = pad
+    curr_y = pad
+
+    primary_color = getattr(style, "primary_color", "#FFFFFF")
+    highlight_color = getattr(style, "highlight_color", "#FFE600")
+    stroke_color = getattr(style, "stroke_color", "#000000")
+
+    for w_text, w_w, w_h, is_highlight in words_data:
+        fill_col = highlight_color if is_highlight else primary_color
+        draw.text(
+            (curr_x, curr_y),
+            w_text,
+            font=font,
+            fill=fill_col,
+            stroke_width=stroke_w,
+            stroke_fill=stroke_color,
+        )
+        curr_x += w_w + space_w
+
+    pos_y = getattr(style, "position_y", 0.70)
+    draw_x = (canvas_w - img_w) // 2
+    draw_y = int(round(canvas_h * pos_y)) - img_h // 2
+
+    return np.array(img), draw_x, draw_y
+
+
 def to_qimage_array(image: np.ndarray):
     # Delayed import keeps the CLI renderer usable without Qt installed.
     from PySide6.QtGui import QImage

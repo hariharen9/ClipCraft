@@ -219,6 +219,21 @@ def build_filter_complex(
             current = next_label
             input_index += 1
 
+    # Burn dynamic captions if enabled
+    captions_cfg = config.get("captions", {})
+    if captions_cfg.get("enabled", False) and captions_cfg.get("cues"):
+        from .captions import CaptionCue, CaptionStyle, export_to_ass
+        raw_cues = captions_cfg.get("cues", [])
+        cues = [CaptionCue.from_dict(c) for c in raw_cues]
+        style = CaptionStyle.from_dict(captions_cfg.get("style"))
+        ass_path = Path(tempfile.gettempdir()) / f"clipcraft_ass_{os.getpid()}.ass"
+        export_to_ass(cues, ass_path, style, canvas_w=out_w, canvas_h=out_h)
+        esc_path = ass_path.as_posix().replace(":", r"\:")
+        next_label = f"comp{step_idx}"
+        parts.append(f"[{current}]subtitles='{esc_path}'[{next_label}]")
+        current = next_label
+        step_idx += 1
+
     parts.append(f"[{current}]format=yuv420p[outv]")
     return ";".join(parts), overlay_inputs
 
@@ -459,7 +474,7 @@ def run_render(
             progress(100.0, "Render complete")
         return output_path
     finally:
-        for p in Path(tempfile.gettempdir()).glob(f"clipcraft_txt_*_{os.getpid()}.png"):
+        for p in Path(tempfile.gettempdir()).glob(f"clipcraft_*_{os.getpid()}.*"):
             try:
                 p.unlink()
             except OSError:

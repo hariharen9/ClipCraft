@@ -13,6 +13,7 @@ from .constants import (
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCropDialog
 from .audio_dialog import AudioStudioDialog
+from .caption_dialog import CaptionStudioDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
@@ -46,6 +47,7 @@ __all__ = [
     "VisualCropBoxItem",
     "VisualSourceCropDialog",
     "AudioStudioDialog",
+    "CaptionStudioDialog",
     "RenderWorker",
     "ClipCraftWindow",
     "launch_gui",

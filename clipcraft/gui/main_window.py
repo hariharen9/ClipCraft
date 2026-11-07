@@ -94,6 +94,7 @@ from .constants import (
 )
 from .crop_dialog import VisualSourceCropDialog
 from .audio_dialog import AudioStudioDialog
+from .caption_dialog import CaptionStudioDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
@@ -144,6 +145,10 @@ class ClipCraftWindow(QMainWindow):
         self.auto_ducking: bool = bool(self.audio_config.get("auto_ducking", AUDIO_DEFAULTS["auto_ducking"]))
         self.audio_fade: bool = bool(self.audio_config.get("fade_in", AUDIO_DEFAULTS["fade_in"]) > 0 or self.audio_config.get("fade_out", AUDIO_DEFAULTS["fade_out"]) > 0)
         self._init_audio_playback()
+        self._parsed_cues = []
+        self._caption_style = None
+        self._caption_item = None
+        self._sync_captions_cache()
         self.preview_sharp = bool(state.get("preview_sharp", True))
         self.preview_scale = 1.5 if self.preview_sharp else 1.0
         self.worker: RenderWorker | None = None
@@ -335,6 +340,41 @@ class ClipCraftWindow(QMainWindow):
         self._sync_audio_badge()
 
         layout.addWidget(audio_group)
+
+        # AI Auto-Captions Studio
+        captions_group = QGroupBox("AI Auto-Captions (Whisper)")
+        captions_layout = QVBoxLayout(captions_group)
+        captions_layout.setContentsMargins(8, 8, 8, 8)
+        captions_layout.setSpacing(6)
+
+        self.captions_btn = QPushButton(" 💬 Auto-Captions (Whisper)…")
+        self.captions_btn.setFixedHeight(34)
+        self.captions_btn.setIcon(qta.icon("fa5s.closed-captioning", color="#00e5ff"))
+        self.captions_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #242b38;
+                color: #ffffff;
+                font-weight: bold;
+                font-size: 12px;
+                border: 1px solid #3d5173;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #2f3d52;
+                border-color: #00e5ff;
+            }
+        """)
+        self.captions_btn.setToolTip("Open AI Auto-Captions Studio to generate animated word-by-word subtitles")
+        self.captions_btn.clicked.connect(self.open_captions_studio)
+        captions_layout.addWidget(self.captions_btn)
+
+        self.captions_badge_lbl = QLabel()
+        self.captions_badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        captions_layout.addWidget(self.captions_badge_lbl)
+        self._sync_captions_badge()
+
+        layout.addWidget(captions_group)
 
         render_group = QGroupBox("Render settings")
         render_layout = QVBoxLayout(render_group)
@@ -608,6 +648,71 @@ class ClipCraftWindow(QMainWindow):
             self.audio_badge_lbl.setText(f"No BGM · Game: {game_vol}%")
             self.audio_badge_lbl.setStyleSheet("font-size: 11px; color: #8e8e93;")
 
+    def _sync_captions_cache(self) -> None:
+        captions_cfg = self.config.get("captions", {})
+        raw_cues = captions_cfg.get("cues", [])
+        from ..captions import CaptionCue, CaptionStyle
+        self._parsed_cues = [CaptionCue.from_dict(c) for c in raw_cues]
+        self._caption_style = CaptionStyle.from_dict(captions_cfg.get("style"))
+        self._sync_captions_badge()
+
+    def _sync_captions_badge(self) -> None:
+        if not hasattr(self, "captions_badge_lbl"):
+            return
+        captions_cfg = self.config.get("captions", {})
+        enabled = bool(captions_cfg.get("enabled", False))
+        count = len(self._parsed_cues) if hasattr(self, "_parsed_cues") else len(captions_cfg.get("cues", []))
+        if enabled and count > 0:
+            self.captions_badge_lbl.setText(f"✓ {count} cues active (Safe Zone)")
+            self.captions_badge_lbl.setStyleSheet("color: #00e5ff; font-size: 11px; font-weight: bold;")
+        elif count > 0:
+            self.captions_badge_lbl.setText(f"{count} cues (Disabled)")
+            self.captions_badge_lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        else:
+            self.captions_badge_lbl.setText("No auto-captions generated")
+            self.captions_badge_lbl.setStyleSheet("color: #666666; font-size: 11px;")
+
+    def _update_live_captions(self, canvas_w: int, canvas_h: int) -> None:
+        if getattr(self, "_caption_item", None) is None:
+            return
+        captions_cfg = self.config.get("captions", {})
+        if not captions_cfg.get("enabled", False) or not getattr(self, "_parsed_cues", None):
+            self._caption_item.setVisible(False)
+            return
+
+        from ..preview import render_caption_overlay
+        img_arr, draw_x, draw_y = render_caption_overlay(
+            self._parsed_cues, self.playhead, canvas_w, canvas_h, self._caption_style
+        )
+        if img_arr is not None:
+            pixmap = QPixmap.fromImage(to_qimage_array(img_arr))
+            self._caption_item.setPixmap(pixmap)
+            self._caption_item.setPos(float(draw_x), float(draw_y))
+            self._caption_item.setVisible(True)
+        else:
+            self._caption_item.setVisible(False)
+
+    def open_captions_studio(self) -> None:
+        from .caption_dialog import CaptionStudioDialog
+        dlg = CaptionStudioDialog(
+            self,
+            video_path=self.video_path,
+            clip_in=self.in_spin.value() if hasattr(self, "in_spin") else 0.0,
+            clip_out=self.out_spin.value() if hasattr(self, "out_spin") else None,
+            captions_config=self.config.get("captions", {}),
+        )
+        dlg.captions_applied.connect(self._on_captions_applied)
+        dlg.exec()
+
+    def _on_captions_applied(self, new_cfg: dict[str, Any]) -> None:
+        self._snapshot("Apply Auto-Captions")
+        self.config["captions"] = dict(new_cfg)
+        self._sync_captions_cache()
+        cw, ch = self._preview_size()
+        self._update_live_captions(cw, ch)
+        count = len(self._parsed_cues)
+        self.statusBar().showMessage(f"Applied Auto-Captions ({count} cues)", 3500)
+
     def open_audio_studio(self) -> None:
         self._stop_playback()
         clip_dur = max(0.0, self.out_spin.value() - self.in_spin.value())
@@ -854,6 +959,8 @@ class ClipCraftWindow(QMainWindow):
             image, _ = layer_preview_image(name, layer, self.current_frame, canvas_w, canvas_h, self.config_path)
             if image is not None:
                 item.set_frame_pixmap(QPixmap.fromImage(to_qimage_array(image)))
+
+        self._update_live_captions(canvas_w, canvas_h)
 
     def _sync_playhead_ui(self) -> None:
         if not self.video_info:
@@ -1444,6 +1551,7 @@ class ClipCraftWindow(QMainWindow):
         self._update_undo_buttons()
         self.game = game_id
         self.config, self.config_path = new_config, new_path
+        self._sync_captions_cache()
         ensure_assets(self.config, self.config_path)
         self.template_name = str(self.config.get("name") or game_id.replace("_", " ").title())
         self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
@@ -1569,6 +1677,7 @@ class ClipCraftWindow(QMainWindow):
 
     def _restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         self.config = clone_config(snapshot)
+        self._sync_captions_cache()
         self._rebuild_layer_combo()
         self.refresh_canvas()
         self._update_undo_buttons()
@@ -1708,6 +1817,11 @@ class ClipCraftWindow(QMainWindow):
         safe_item.setVisible(self.show_safe_zones)
         self.scene.addItem(safe_item)
         self._safe_zone_item = safe_item
+
+        self._caption_item = QGraphicsPixmapItem()
+        self._caption_item.setZValue(999.0)
+        self.scene.addItem(self._caption_item)
+        self._update_live_captions(canvas_w, canvas_h)
         if hasattr(self, 'layer_stack'):
             self.layer_stack.populate(self.config.get('layers', {}), self._active_layer_name())
         self.select_layer()

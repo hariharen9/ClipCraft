@@ -361,7 +361,18 @@ Maintains pixel-perfect parity with FFmpeg inside Python:
 - `render_background()`: Matches FFmpeg chroma saturation adjustments by converting to grayscale and using weighted blending (`cv2.addWeighted`).
 - `normalized_crop()`: Slices raw NumPy arrays with boundary clamping.
 - `render_text_image()`: Multi-pass text drawing with stroke outlines and alignment offsets.
+- `render_caption_overlay()`: Renders active word-by-word karaoke highlighted captions into an RGBA overlay for real-time playhead scrubbing and playback.
 - `to_qimage_array()`: Zero-copy conversion of NumPy BGR, RGBA, or Grayscale arrays into Qt `QImage` structures.
+
+### 6.5 AI Auto-Captions Engine (`clipcraft.captions`)
+- **Local Speech-to-Text**: Powered by `faster-whisper` (CTranslate2) running locally with INT8 CPU acceleration or CUDA GPU float16.
+- **Word-Level Timestamping**: Extracts audio via FFmpeg (16kHz mono WAV) and transcribes with `word_timestamps=True`.
+- **High-Retention Word Chunking**: `group_words_into_cues()` groups words into punchy, bite-sized 2–4 word phrases segmented by pauses, punctuation, and duration constraints.
+- **Word-by-Word Karaoke Animation**:
+  - Generates Advanced SubStation Alpha (`.ass`) subtitle files with active-word color tags (`{\c&H0000E6FF&}...{\c&H00FFFFFF&}`).
+  - Burns directly into the video filter complex via FFmpeg `subtitles='...'` with zero frame drop and native vector sharpness.
+  - Generates standard `.srt` subtitle files for creators desiring standalone subtitles.
+  - Safe-zone positioning defaults to $Y=0.70$ (30% above bottom), keeping text above TikTok/Shorts UI overlays.
 
 ---
 
@@ -386,6 +397,13 @@ To maintain smooth 60fps playback with full sound synchronization:
 - **Music Trimming / Cutting**: Visual scrubber timeline with start (IN) and end (OUT) offset spinboxes to start music at specific points (e.g. beat drops) before looping.
 - **Audition Mode**: Dedicated play/pause audition player allows testing music cuts and volume balance directly in the dialog before applying.
 - **Volume & FX**: Independent sliders for BGM Volume and Gameplay Audio, Auto-Ducking toggle, and smooth boundary Fade In/Out controls.
+
+### 7.4 AI Auto-Captions Studio (`CaptionStudioDialog` in `caption_dialog.py`)
+- Dedicated modal studio for local Whisper speech-to-text generation and animated subtitle styling.
+- **Background Worker**: `TranscriptionWorker` (`QThread`) executes speech recognition in the background with live progress updates.
+- **Transcript Editor**: In-place editable table for quick corrections of terms or gamer tags.
+- **Visual Styler**: Live controls for Neon Yellow, Green, Cyan, Coral highlight colors, font size, stroke thickness, uppercase toggle, and safe-zone presets.
+- **Export Formats**: One-click export to `.SRT` or `.ASS`.
 
 ### 7.4 Undo / Redo Transactional Model
 - Manages an in-memory history of up to 100 deep-copied configuration snapshots.
@@ -435,6 +453,16 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `build_filter_complex(config, config_path, video_info) -> tuple[str, list[Path]]`: Compiles FFmpeg filter string.
 - `build_ffmpeg_command(video_path, output_path, start, end, config, config_path, encoder) -> tuple[list[str], float]`: Assembles complete FFmpeg CLI command.
 - `run_render(...) -> Path`: Executes subprocess, streams progress, falls back to CPU on NVENC failure.
+
+### Module: `clipcraft.captions`
+- `CaptionWord`: Dataclass storing word string, start timestamp, end timestamp, and probability.
+- `CaptionCue`: Dataclass storing cue start, end, text, and constituent words.
+- `CaptionStyle`: Dataclass configuring font, colors, stroke, vertical position, uppercase, and karaoke highlight.
+- `extract_audio_for_transcription(video_path, start, end, out_wav) -> Path`: Extracts 16kHz mono WAV for Whisper.
+- `group_words_into_cues(words, max_words, max_duration, pause_threshold) -> list[CaptionCue]`: Groups words into punchy 2–4 word phrases.
+- `transcribe_video_audio(video_path, start, end, model_size, language, callback) -> tuple[list[CaptionCue], str]`: Executes local `faster-whisper` transcription.
+- `export_to_ass(cues, output_path, style, canvas_w, canvas_h) -> Path`: Compiles ASS subtitle file with active-word color tags.
+- `export_to_srt(cues, output_path, uppercase) -> Path`: Exports standard SRT subtitle file.
 
 ### Module: `clipcraft.preview`
 - `resolve_font(family: str, size: int, bold: bool) -> ImageFont`: Resolves system TTF font with fallbacks.
