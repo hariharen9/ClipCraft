@@ -16,6 +16,7 @@ from clipcraft.captions import (
     format_srt_timestamp,
     export_to_ass,
     export_to_srt,
+    is_cuda_usable,
 )
 from clipcraft.preview import render_caption_overlay
 from clipcraft.renderer import build_filter_complex
@@ -216,6 +217,10 @@ class TestCaptionsEngine(unittest.TestCase):
         self.assertTrue(out_cfg["enabled"])
         self.assertEqual(len(out_cfg["cues"]), 1)
         dlg.close()
+
+    def test_is_cuda_usable_boolean(self):
+        usable = is_cuda_usable()
+        self.assertIsInstance(usable, bool)
 
 
 if __name__ == "__main__":

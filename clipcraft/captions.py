@@ -8,7 +8,9 @@ and generates styled ASS subtitle streams with karaoke active-word highlighting.
 from __future__ import annotations
 
 import math
+import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -247,6 +249,51 @@ def group_words_into_cues(
     return cues
 
 
+def _setup_cuda_dll_directories() -> None:
+    """Add NVIDIA pip package bin directories to Windows DLL search path if present."""
+    if sys.platform != "win32":
+        return
+    try:
+        import site
+        for site_pkg in site.getsitepackages():
+            nvidia_dir = Path(site_pkg) / "nvidia"
+            if nvidia_dir.is_dir():
+                for sub in nvidia_dir.iterdir():
+                    bin_dir = sub / "bin"
+                    if bin_dir.is_dir():
+                        try:
+                            os.add_dll_directory(str(bin_dir))
+                        except Exception:
+                            pass
+                        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass
+
+
+def is_cuda_usable() -> bool:
+    """Checks whether CUDA can actually be loaded and used by ctranslate2."""
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() <= 0:
+            return False
+        _setup_cuda_dll_directories()
+        if sys.platform == "win32":
+            import ctypes
+            loaded = False
+            for dll in ("cublas64_12.dll", "cublas64_11.dll"):
+                try:
+                    ctypes.CDLL(dll)
+                    loaded = True
+                    break
+                except Exception:
+                    continue
+            if not loaded:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def transcribe_video_audio(
     video_path: str | Path,
     start_sec: float = 0.0,
@@ -268,31 +315,39 @@ def transcribe_video_audio(
     wav_path = extract_audio_for_transcription(video_path, start_sec, end_sec)
 
     try:
-        if progress_callback:
-            progress_callback(0.25, f"Loading Whisper model ({model_size})…")
+        device = "cuda" if is_cuda_usable() else "cpu"
+        compute_type = "float16" if device == "cuda" else "int8"
 
-        # Determine best available compute device
-        device = "cpu"
-        compute_type = "int8"
+        if progress_callback:
+            progress_callback(0.25, f"Loading Whisper model ({model_size}) on {device.upper()}…")
+
+        def _do_transcribe(dev: str, comp: str):
+            mdl = WhisperModel(model_size, device=dev, compute_type=comp)
+            segs, inf = mdl.transcribe(
+                str(wav_path),
+                word_timestamps=True,
+                vad_filter=True,
+                language=language,
+            )
+            # Evaluate the generator to immediately catch any CUDA runtime / DLL errors
+            return list(segs), inf
+
         try:
-            import ctranslate2
-            if ctranslate2.get_cuda_device_count() > 0:
-                device = "cuda"
-                compute_type = "float16"
-        except Exception:
-            pass
-
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            segments, info = _do_transcribe(device, compute_type)
+        except Exception as exc:
+            # If CUDA fails for ANY reason (e.g. missing cuBLAS DLL, driver mismatch, OOM),
+            # gracefully and automatically fallback to CPU int8!
+            if device != "cpu":
+                if progress_callback:
+                    progress_callback(0.35, f"GPU mode failed ({exc}). Falling back to CPU…")
+                device = "cpu"
+                compute_type = "int8"
+                segments, info = _do_transcribe(device, compute_type)
+            else:
+                raise
 
         if progress_callback:
-            progress_callback(0.45, "Transcribing speech and extracting word timestamps…")
-
-        segments, info = model.transcribe(
-            str(wav_path),
-            word_timestamps=True,
-            vad_filter=True,
-            language=language,
-        )
+            progress_callback(0.60, "Processing word timestamps…")
 
         detected_lang = info.language if hasattr(info, "language") else "en"
         raw_words: list[CaptionWord] = []

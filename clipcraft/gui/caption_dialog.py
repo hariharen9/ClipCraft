@@ -40,6 +40,7 @@ from ..captions import (
     export_to_ass,
     export_to_srt,
     format_srt_timestamp,
+    is_cuda_usable,
 )
 
 
@@ -165,7 +166,7 @@ class CaptionStudioDialog(QDialog):
         header.addWidget(header_icon)
 
         title_col = QVBoxLayout()
-        title_lbl = QLabel("AI Auto-Captions && Subtitles Studio")
+        title_lbl = QLabel("AI Auto-Captions & Subtitles Studio")
         title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
         subtitle_lbl = QLabel("Generate high-retention word-by-word animated captions placed in the vertical safe zone.")
         subtitle_lbl.setStyleSheet("font-size: 11px; color: #8e8e93;")
@@ -202,15 +203,15 @@ class CaptionStudioDialog(QDialog):
         gen_controls.addWidget(self.lang_combo)
 
         # Detect compute device
-        dev_desc = "CPU (int8)"
-        try:
-            import ctranslate2
-            if ctranslate2.get_cuda_device_count() > 0:
-                dev_desc = "GPU (CUDA float16)"
-        except Exception:
-            pass
+        if is_cuda_usable():
+            dev_desc = "GPU (CUDA float16)"
+            badge_color = "#4CAF50"
+        else:
+            dev_desc = "CPU (int8 - Fast)"
+            badge_color = "#00bcd4"
         dev_badge = QLabel(f"⚡ {dev_desc}")
-        dev_badge.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
+        dev_badge.setStyleSheet(f"color: {badge_color}; font-size: 11px; font-weight: bold;")
+        dev_badge.setToolTip("Speech recognition execution engine")
         gen_controls.addWidget(dev_badge)
 
         self.transcribe_btn = QPushButton(" Generate Captions")
