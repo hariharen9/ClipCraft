@@ -88,6 +88,13 @@ ClipCraft/
 │
 ├── templates/                         # Layout Template Definitions (JSON)
 │   ├── valorant.json                  # Valorant layout (main, killfeed, chat, logos, titles)
+│   ├── valorant.example.json          # Example template with relative assets and creator branding
+│   ├── r6siege.json                   # Rainbow Six Siege (operator HUD, weapon HUD, round timer, killfeed)
+│   ├── cs2.json                       # Counter-Strike 2 (radar top-left, killfeed top-right, health/ammo)
+│   ├── apex.json                      # Apex Legends (squad health, minimap, killfeed, weapons)
+│   ├── warzone.json                   # Call of Duty: Warzone (minimap, killfeed, team status, perks)
+│   ├── fortnite.json                  # Fortnite (storm minimap, eliminated feed, health/shield, inventory)
+│   ├── lol.json                       # League of Legends (champion ability bar, minimap, score)
 │   ├── general_cam.json               # Generic gaming layout with dedicated top facecam
 │   └── general_nocam.json             # Gameplay-focused clean layout
 │

@@ -20,7 +20,7 @@ Drop your recording, pick your moments, align your layout, and export crisp 60fp
 * **Real-Time Visual Cropping**: No guesswork. Frame your killfeed or facecam by simply dragging an interactive box directly over the uncropped source recording.
 * **Instant Keyboard Trimming**: Edit at the speed of thought with classic NLE shuttle hotkeys (`J` `K` `L`, `Space`, `I` / `O`).
 * **Built-in Styled Text Overlays**: Add catchy captions, hook titles, or social handles directly inside the editor—complete with bold fonts, color pickers, and outline strokes.
-* **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
+* **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **Rainbow Six Siege**, **Counter-Strike 2**, **Apex Legends**, **Call of Duty / Warzone**, **Fortnite**, **League of Legends**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 

@@ -15,6 +15,12 @@ class TestTemplates(unittest.TestCase):
         self.assertGreaterEqual(len(templates), 1, "At least one template must be available")
         game_ids = [t[0] for t in templates]
         self.assertIn("valorant", game_ids)
+        self.assertIn("r6siege", game_ids)
+        self.assertIn("cs2", game_ids)
+        self.assertIn("apex", game_ids)
+        self.assertIn("warzone", game_ids)
+        self.assertIn("fortnite", game_ids)
+        self.assertIn("lol", game_ids)
 
     def test_templates_schema(self):
         root = Path(__file__).resolve().parent.parent

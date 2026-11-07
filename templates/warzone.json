@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "name": "Call of Duty: Warzone",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "encoder": "auto",
+    "quality": 14,
+    "nvenc_preset": "p5",
+    "x264_preset": "medium"
+  },
+  "background": {
+    "blur": 2.0,
+    "brightness": -0.08,
+    "saturation": 1.18
+  },
+  "branding": {
+    "channel_name": "CREATOR",
+    "youtube_handle": "@creator",
+    "instagram_handle": "@creator"
+  },
+  "layers": {
+    "background": {
+      "kind": "background",
+      "rect": [0.0, 0.0, 1.0, 1.0],
+      "z": 0,
+      "visible": true
+    },
+    "main": {
+      "kind": "video",
+      "rect": [0.0, 0.25, 1.0, 0.50],
+      "crop": [0.0, 0.0, 1.0, 1.0],
+      "fit": "cover",
+      "z": 10,
+      "visible": true
+    },
+    "facecam": {
+      "kind": "video",
+      "rect": [0.05, 0.03, 0.90, 0.11],
+      "crop": [0.72, 0.65, 0.28, 0.35],
+      "fit": "cover",
+      "z": 15,
+      "visible": false
+    },
+    "minimap": {
+      "kind": "video",
+      "rect": [0.04, 0.15, 0.44, 0.09],
+      "crop": [0.025, 0.035, 0.17, 0.19],
+      "fit": "contain",
+      "z": 20,
+      "visible": true
+    },
+    "killfeed": {
+      "kind": "video",
+      "rect": [0.50, 0.15, 0.46, 0.09],
+      "crop": [0.70, 0.05, 0.28, 0.15],
+      "fit": "cover",
+      "z": 25,
+      "visible": true
+    },
+    "team_status": {
+      "kind": "video",
+      "rect": [0.04, 0.76, 0.44, 0.11],
+      "crop": [0.02, 0.78, 0.20, 0.20],
+      "fit": "cover",
+      "z": 30,
+      "visible": true
+    },
+    "weapon_perks": {
+      "kind": "video",
+      "rect": [0.50, 0.76, 0.46, 0.11],
+      "crop": [0.74, 0.83, 0.24, 0.15],
+      "fit": "cover",
+      "z": 35,
+      "visible": true
+    }
+  }
+}
+

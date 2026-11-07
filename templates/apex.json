@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "name": "Apex Legends",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "encoder": "auto",
+    "quality": 14,
+    "nvenc_preset": "p5",
+    "x264_preset": "medium"
+  },
+  "background": {
+    "blur": 2.0,
+    "brightness": -0.06,
+    "saturation": 1.20
+  },
+  "branding": {
+    "channel_name": "CREATOR",
+    "youtube_handle": "@creator",
+    "instagram_handle": "@creator"
+  },
+  "layers": {
+    "background": {
+      "kind": "background",
+      "rect": [0.0, 0.0, 1.0, 1.0],
+      "z": 0,
+      "visible": true
+    },
+    "main": {
+      "kind": "video",
+      "rect": [0.0, 0.25, 1.0, 0.50],
+      "crop": [0.0, 0.0, 1.0, 1.0],
+      "fit": "cover",
+      "z": 10,
+      "visible": true
+    },
+    "facecam": {
+      "kind": "video",
+      "rect": [0.05, 0.03, 0.90, 0.11],
+      "crop": [0.72, 0.65, 0.28, 0.35],
+      "fit": "cover",
+      "z": 15,
+      "visible": false
+    },
+    "minimap": {
+      "kind": "video",
+      "rect": [0.04, 0.15, 0.44, 0.09],
+      "crop": [0.02, 0.025, 0.18, 0.20],
+      "fit": "contain",
+      "z": 20,
+      "visible": true
+    },
+    "killfeed": {
+      "kind": "video",
+      "rect": [0.50, 0.15, 0.46, 0.09],
+      "crop": [0.72, 0.03, 0.27, 0.16],
+      "fit": "cover",
+      "z": 25,
+      "visible": true
+    },
+    "squad_health": {
+      "kind": "video",
+      "rect": [0.04, 0.76, 0.54, 0.11],
+      "crop": [0.02, 0.81, 0.28, 0.17],
+      "fit": "cover",
+      "z": 30,
+      "visible": true
+    },
+    "weapon_ammo": {
+      "kind": "video",
+      "rect": [0.60, 0.76, 0.36, 0.11],
+      "crop": [0.79, 0.84, 0.19, 0.14],
+      "fit": "cover",
+      "z": 35,
+      "visible": true
+    }
+  }
+}
+
