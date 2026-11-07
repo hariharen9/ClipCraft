@@ -365,7 +365,7 @@ Maintains pixel-perfect parity with FFmpeg inside Python:
 - `to_qimage_array()`: Zero-copy conversion of NumPy BGR, RGBA, or Grayscale arrays into Qt `QImage` structures.
 
 ### 6.5 AI Auto-Captions Engine (`clipcraft.captions`)
-- **Local Speech-to-Text**: Powered by `faster-whisper` (CTranslate2) running locally with INT8 CPU acceleration or CUDA GPU float16.
+- **Local Speech-to-Text**: Powered by `faster-whisper` (CTranslate2) running locally with INT8 CPU acceleration or CUDA GPU float16. Includes `is_cuda_usable()` check for cuBLAS runtime DLLs (`cublas64_12.dll`) and automatic graceful CPU (`int8`) fallback to prevent crashes if CUDA runtime libraries are missing.
 - **Word-Level Timestamping**: Extracts audio via FFmpeg (16kHz mono WAV) and transcribes with `word_timestamps=True`.
 - **High-Retention Word Chunking**: `group_words_into_cues()` groups words into punchy, bite-sized 2–4 word phrases segmented by pauses, punctuation, and duration constraints.
 - **Word-by-Word Karaoke Animation**:
