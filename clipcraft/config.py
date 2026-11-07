@@ -121,15 +121,30 @@ def validate_config(data: dict[str, Any]) -> None:
 
 def template_path(game: str) -> Path:
     """Path of a game template: templates/<game>.json."""
-    return TEMPLATES_DIR / f"{game.lower()}.json"
+    target = TEMPLATES_DIR / f"{game.lower()}.json"
+    if not target.is_file():
+        example = TEMPLATES_DIR / f"{game.lower()}.example.json"
+        if example.is_file():
+            import shutil
+            shutil.copy2(example, target)
+    return target
 
 
 def available_templates() -> list[tuple[str, str]]:
     """(game_id, display name) for every template in templates/, sorted by name."""
     if not TEMPLATES_DIR.is_dir():
         return []
+    for example in TEMPLATES_DIR.glob("*.example.json"):
+        base_name = example.name.replace(".example.json", ".json")
+        target = TEMPLATES_DIR / base_name
+        if not target.is_file():
+            import shutil
+            shutil.copy2(example, target)
+
     templates: list[tuple[str, str]] = []
     for path in sorted(TEMPLATES_DIR.glob("*.json")):
+        if path.name.endswith(".example.json"):
+            continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

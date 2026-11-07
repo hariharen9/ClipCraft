@@ -109,7 +109,7 @@ def make_panda_logo(path: Path, channel_name: str) -> None:
 
 
 def ensure_assets(config: dict, config_path: Path) -> dict[str, Path]:
-    """Create the default editable branding PNGs if the configured paths are the defaults."""
+    """Create default branding PNGs or fallback to defaults if configured paths are missing."""
     branding = config.get("branding", {})
     output: dict[str, Path] = {}
     defaults = {
@@ -129,8 +129,14 @@ def ensure_assets(config: dict, config_path: Path) -> dict[str, Path]:
         if not path.is_absolute():
             path = config_path.parent / path
         path = path.resolve()
-        output[layer_name] = path
-        if path == (config_path.parent / default_rel).resolve():
+        if not path.is_file():
+            fallback = (config_path.parent / default_rel).resolve()
+            fallback.parent.mkdir(parents=True, exist_ok=True)
+            generator(fallback)
+            layer["asset"] = default_rel
+            path = fallback
+        elif path == (config_path.parent / default_rel).resolve():
             path.parent.mkdir(parents=True, exist_ok=True)
             generator(path)
+        output[layer_name] = path
     return output

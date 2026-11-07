@@ -9,3 +9,4 @@ clipcraft_state.json
 .pytest_cache/
 *.zip
 *.egg-info
+templates/valorant.json
