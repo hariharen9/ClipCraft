@@ -495,3 +495,4 @@ Run the entire automated test suite:
 4. **State Persistence**: Always use `save_state()` and `save_config()` from `clipcraft.config`, which write to `.tmp` files before atomic replacement. Never write directly to target JSON files.
 5. **Backwards Compatibility**: Maintain compatibility shims when restructuring:
    - `clipcraft.batch_gui` shim for `clipcraft.gui.batch_window`.
+6. **Launcher & Virtualenv Resilience**: Batch launchers (`run_gui.bat`, `run_batch.bat`, `render.bat`, `install.bat`) must directly invoke `%~dp0.venv\Scripts\python.exe` to avoid executing system Python (e.g. Python 3.13) which may lack dependencies. Launchers must keep the window open (`pause`) on non-zero exit codes. Unhandled crashes and GUI startup errors must be written to `clipcraft.log` via `_setup_crash_logging()` in `clipcraft.py`.
