@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QUrl, QTimer, Signal
-from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent
+from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent, QMouseEvent, QKeyEvent
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtWidgets import (
     QDialog,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
     QSizePolicy,
+    QStyle,
 )
 import qtawesome as qta
 
@@ -39,6 +40,21 @@ def _format_time_ms(seconds: float) -> str:
     mins, rem = divmod(total_ms, 60_000)
     secs, millis = divmod(rem, 1000)
     return f"{mins}:{secs:02d}.{millis:03d}"
+
+
+class AudioScrubberSlider(QSlider):
+    """QSlider that jumps directly to clicked timeline positions and supports smooth scrubbing."""
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            val = QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(), int(event.position().x()), self.width()
+            )
+            self.setValue(val)
+            self.sliderMoved.emit(val)
+        else:
+            super().mousePressEvent(event)
 
 
 class AudioStudioDialog(QDialog):
@@ -65,6 +81,7 @@ class AudioStudioDialog(QDialog):
 
         # Track metadata
         self._bgm_duration: float = 0.0
+        self._last_audition_pos_sec: float = 0.0
         self._audition_player: QMediaPlayer | None = None
         self._audition_output: QAudioOutput | None = None
         self._audition_timer: QTimer | None = None
@@ -146,9 +163,10 @@ class AudioStudioDialog(QDialog):
         self.audition_btn.clicked.connect(self._toggle_audition)
         scrub_row.addWidget(self.audition_btn)
 
-        self.scrubber = QSlider(Qt.Orientation.Horizontal)
+        self.scrubber = AudioScrubberSlider(Qt.Orientation.Horizontal)
         self.scrubber.setRange(0, 10000)
         self.scrubber.sliderMoved.connect(self._on_scrubber_moved)
+        self.scrubber.sliderReleased.connect(self._on_scrubber_released)
         scrub_row.addWidget(self.scrubber, 1)
 
         self.scrub_time_lbl = QLabel("0:00.000 / 0:00.000")
@@ -164,9 +182,9 @@ class AudioStudioDialog(QDialog):
         self.bgm_start_spin = QDoubleSpinBox()
         self.bgm_start_spin.setRange(0.0, 3600.0)
         self.bgm_start_spin.setSingleStep(0.5)
-        self.bgm_start_spin.setDecimals(3)
+        self.bgm_start_spin.setDecimals(2)
         self.bgm_start_spin.setSuffix(" s")
-        self.bgm_start_spin.setFixedWidth(90)
+        self.bgm_start_spin.setFixedWidth(115)
         self.bgm_start_spin.valueChanged.connect(self._on_cut_spin_changed)
         points_row.addWidget(self.bgm_start_spin)
 
@@ -181,9 +199,9 @@ class AudioStudioDialog(QDialog):
         self.bgm_end_spin = QDoubleSpinBox()
         self.bgm_end_spin.setRange(0.0, 3600.0)
         self.bgm_end_spin.setSingleStep(0.5)
-        self.bgm_end_spin.setDecimals(3)
+        self.bgm_end_spin.setDecimals(2)
         self.bgm_end_spin.setSuffix(" s")
-        self.bgm_end_spin.setFixedWidth(90)
+        self.bgm_end_spin.setFixedWidth(130)
         self.bgm_end_spin.setSpecialValueText("End of track")
         self.bgm_end_spin.valueChanged.connect(self._on_cut_spin_changed)
         points_row.addWidget(self.bgm_end_spin)
@@ -263,19 +281,21 @@ class AudioStudioDialog(QDialog):
         self.fade_in_spin = QDoubleSpinBox()
         self.fade_in_spin.setRange(0.0, 3.0)
         self.fade_in_spin.setSingleStep(0.1)
+        self.fade_in_spin.setDecimals(2)
         self.fade_in_spin.setSuffix(" s")
         self.fade_in_spin.setValue(0.5)
-        self.fade_in_spin.setFixedWidth(70)
+        self.fade_in_spin.setFixedWidth(98)
         fades_row.addWidget(self.fade_in_spin)
 
-        fades_row.addSpacing(12)
+        fades_row.addSpacing(16)
         fades_row.addWidget(QLabel("Fade Out:"))
         self.fade_out_spin = QDoubleSpinBox()
         self.fade_out_spin.setRange(0.0, 3.0)
         self.fade_out_spin.setSingleStep(0.1)
+        self.fade_out_spin.setDecimals(2)
         self.fade_out_spin.setSuffix(" s")
         self.fade_out_spin.setValue(0.5)
-        self.fade_out_spin.setFixedWidth(70)
+        self.fade_out_spin.setFixedWidth(98)
         fades_row.addWidget(self.fade_out_spin)
 
         fades_row.addStretch()
@@ -384,7 +404,8 @@ class AudioStudioDialog(QDialog):
             self._audition_player.setSource(QUrl.fromLocalFile(str(p)))
 
         self._update_cut_summary()
-        self._sync_scrubber(0.0)
+        start = self.bgm_start_spin.value()
+        self._sync_scrubber(start)
 
     def _clear_bgm(self) -> None:
         self._stop_audition()
@@ -413,8 +434,19 @@ class AudioStudioDialog(QDialog):
     def _start_audition(self) -> None:
         if not self.file_edit.text():
             return
+        dur = max(0.001, self._bgm_duration)
+        scrub_sec = (self.scrubber.value() / 10000.0) * dur
         start_sec = self.bgm_start_spin.value()
-        self._audition_player.setPosition(int(start_sec * 1000))
+        end_sec = self.bgm_end_spin.value()
+
+        # If scrubber is at the end of track or at/beyond loop end, start from start_sec
+        if (end_sec > start_sec and scrub_sec >= end_sec - 0.05) or (dur > 0 and scrub_sec >= dur - 0.05):
+            play_sec = start_sec
+        else:
+            play_sec = scrub_sec
+
+        self._last_audition_pos_sec = play_sec
+        self._audition_player.setPosition(int(play_sec * 1000))
         vol = self.bgm_slider.value() / 100.0
         self._audition_output.setVolume(min(1.0, vol))
         self._audition_player.play()
@@ -436,13 +468,15 @@ class AudioStudioDialog(QDialog):
         pos_sec = self._audition_player.position() / 1000.0
         end_sec = self.bgm_end_spin.value()
         start_sec = self.bgm_start_spin.value()
+        dur = max(0.001, self._bgm_duration)
 
         # Check loop boundary
-        if end_sec > start_sec and pos_sec >= end_sec:
+        if (end_sec > start_sec and pos_sec >= end_sec) or (dur > 0 and pos_sec >= dur - 0.05):
             self._audition_player.setPosition(int(start_sec * 1000))
             pos_sec = start_sec
 
-        self._sync_scrubber(pos_sec)
+        if not self.scrubber.isSliderDown():
+            self._sync_scrubber(pos_sec)
 
     def _on_player_duration_changed(self, dur_ms: int) -> None:
         if dur_ms > 0 and self._bgm_duration <= 0.0:
@@ -463,6 +497,12 @@ class AudioStudioDialog(QDialog):
         dur = max(0.001, self._bgm_duration)
         pos_sec = (value / 10000.0) * dur
         self.scrub_time_lbl.setText(f"{_format_time_ms(pos_sec)} / {_format_time_ms(dur)}")
+        if self._audition_player:
+            self._audition_player.setPosition(int(pos_sec * 1000))
+
+    def _on_scrubber_released(self) -> None:
+        dur = max(0.001, self._bgm_duration)
+        pos_sec = (self.scrubber.value() / 10000.0) * dur
         if self._audition_player:
             self._audition_player.setPosition(int(pos_sec * 1000))
 
@@ -535,6 +575,13 @@ class AudioStudioDialog(QDialog):
                         self.set_bgm_track(str(path))
                         return
         super().dropEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Space:
+            self._toggle_audition()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ================================================================
     #  DIALOG CLOSE

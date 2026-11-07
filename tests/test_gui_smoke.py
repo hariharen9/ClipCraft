@@ -101,6 +101,34 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertEqual(res["gameplay_volume"], 0.85)
         self.assertEqual(res["bgm_start"], 12.5)
         self.assertEqual(res["bgm_end"], 45.0)
+
+        # Check spinbox widths prevent text truncation
+        self.assertGreaterEqual(dlg.fade_in_spin.maximumWidth(), 95)
+        self.assertGreaterEqual(dlg.fade_out_spin.maximumWidth(), 95)
+        self.assertGreaterEqual(dlg.bgm_start_spin.maximumWidth(), 110)
+        self.assertGreaterEqual(dlg.bgm_end_spin.maximumWidth(), 125)
+        dlg.close()
+
+    def test_audio_studio_scrub_and_audition_position(self):
+        cfg = {
+            "bgm_path": None,
+            "bgm_volume": 0.5,
+            "gameplay_volume": 1.0,
+            "bgm_start": 5.0,
+            "bgm_end": 50.0,
+        }
+        dlg = AudioStudioDialog(None, audio_config=cfg, clip_duration=60.0)
+        dlg.file_edit.setText("dummy_track.mp3")
+        dlg._bgm_duration = 60.0
+
+        # Simulate user scrubbing to 25.0 seconds (25 / 60 * 10000 = ~4166)
+        dlg.scrubber.setValue(4166)
+        dlg._on_scrubber_moved(4166)
+
+        # Starting audition must play from the scrubbed position, NOT reset to start_spin (5.0s)
+        dlg._start_audition()
+        self.assertAlmostEqual(dlg._last_audition_pos_sec, 25.0, delta=0.2)
+        dlg._stop_audition()
         dlg.close()
 
 
