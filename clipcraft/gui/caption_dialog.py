@@ -93,6 +93,31 @@ COLOR_PRESETS = [
     ("Pure White (#FFFFFF)", "#FFFFFF"),
 ]
 
+SUPPORTED_LANGUAGES = [
+    ("Auto-Detect", None),
+    ("English", "en"),
+    ("Spanish", "es"),
+    ("French", "fr"),
+    ("German", "de"),
+    ("Italian", "it"),
+    ("Portuguese", "pt"),
+    ("Japanese", "ja"),
+    ("Korean", "ko"),
+    ("Chinese", "zh"),
+    ("Russian", "ru"),
+    ("Arabic", "ar"),
+    ("Hindi", "hi"),
+    ("Dutch", "nl"),
+    ("Polish", "pl"),
+    ("Turkish", "tr"),
+    ("Swedish", "sv"),
+    ("Indonesian", "id"),
+    ("Vietnamese", "vi"),
+    ("Ukrainian", "uk"),
+]
+
+LANG_NAME_MAP = {code: name for name, code in SUPPORTED_LANGUAGES if code is not None}
+
 
 class CaptionStudioDialog(QDialog):
     """Separate window for generating, editing, and styling Whisper auto-captions."""
@@ -140,7 +165,7 @@ class CaptionStudioDialog(QDialog):
         header.addWidget(header_icon)
 
         title_col = QVBoxLayout()
-        title_lbl = QLabel("AI Auto-Captions & Subtitles Studio")
+        title_lbl = QLabel("AI Auto-Captions && Subtitles Studio")
         title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #ffffff;")
         subtitle_lbl = QLabel("Generate high-retention word-by-word animated captions placed in the vertical safe zone.")
         subtitle_lbl.setStyleSheet("font-size: 11px; color: #8e8e93;")
@@ -163,15 +188,17 @@ class CaptionStudioDialog(QDialog):
         gen_controls.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
         self.model_combo.addItems([
-            "base (Recommended · Fast & Accurate)",
+            "base (Recommended · Accurate)",
             "tiny (Fastest · ~75MB)",
-            "small (High Accuracy · ~460MB)",
+            "small (High Precision · ~460MB)",
         ])
         gen_controls.addWidget(self.model_combo, 1)
 
         gen_controls.addWidget(QLabel("Language:"))
         self.lang_combo = QComboBox()
-        self.lang_combo.addItems(["Auto-Detect", "en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"])
+        self.lang_combo.setFixedWidth(135)
+        for label, code in SUPPORTED_LANGUAGES:
+            self.lang_combo.addItem(label, code)
         gen_controls.addWidget(self.lang_combo)
 
         # Detect compute device
@@ -198,7 +225,22 @@ class CaptionStudioDialog(QDialog):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setFixedHeight(22)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #3d5173;
+                border-radius: 4px;
+                text-align: center;
+                background-color: #1e1e24;
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QProgressBar::chunk {
+                background-color: #0078d4;
+                border-radius: 3px;
+            }
+        """)
         gen_layout.addWidget(self.progress_bar)
 
         self.status_lbl = QLabel("Ready to transcribe audio from current clip.")
@@ -207,34 +249,34 @@ class CaptionStudioDialog(QDialog):
         layout.addWidget(gen_group)
 
         # Section 2: Style & Safe Zone Settings
-        style_group = QGroupBox("Caption Styling & Safe Zone Placement")
+        style_group = QGroupBox("Caption Styling && Safe Zone Placement")
         style_layout = QVBoxLayout(style_group)
         style_layout.setSpacing(8)
 
         # Row 1: Colors & Typography
         row1 = QHBoxLayout()
+        row1.setSpacing(14)
         row1.addWidget(QLabel("Highlight Color:"))
         self.highlight_combo = QComboBox()
+        self.highlight_combo.setFixedWidth(185)
         for label, hex_val in COLOR_PRESETS:
             self.highlight_combo.addItem(label, hex_val)
         row1.addWidget(self.highlight_combo)
 
-        row1.addSpacing(12)
         row1.addWidget(QLabel("Font Size:"))
         self.size_spin = QSpinBox()
         self.size_spin.setRange(24, 120)
         self.size_spin.setValue(self.style.font_size)
         self.size_spin.setSuffix(" pt")
-        self.size_spin.setFixedWidth(85)
+        self.size_spin.setFixedWidth(100)
         row1.addWidget(self.size_spin)
 
-        row1.addSpacing(12)
         row1.addWidget(QLabel("Outline Stroke:"))
         self.stroke_spin = QSpinBox()
         self.stroke_spin.setRange(0, 20)
         self.stroke_spin.setValue(self.style.stroke_width)
         self.stroke_spin.setSuffix(" px")
-        self.stroke_spin.setFixedWidth(80)
+        self.stroke_spin.setFixedWidth(100)
         row1.addWidget(self.stroke_spin)
 
         row1.addStretch()
@@ -393,13 +435,12 @@ class CaptionStudioDialog(QDialog):
         elif idx == 2:
             model_key = "small"
 
-        lang_val = self.lang_combo.currentText()
-        lang = None if lang_val == "Auto-Detect" else lang_val
+        lang = self.lang_combo.currentData()
 
         self.transcribe_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(10)
-        self.status_lbl.setText(f"Starting Whisper ({model_key}) transcription…")
+        self.status_lbl.setText(f"Starting Whisper ({model_key}) transcription… (10%)")
 
         self._worker = TranscriptionWorker(
             video_path=self.video_path,
@@ -414,15 +455,17 @@ class CaptionStudioDialog(QDialog):
         self._worker.start()
 
     def _on_worker_progress(self, frac: float, msg: str) -> None:
-        self.progress_bar.setValue(int(round(frac * 100)))
-        self.status_lbl.setText(msg)
+        percent = int(round(frac * 100))
+        self.progress_bar.setValue(percent)
+        self.status_lbl.setText(f"{msg} ({percent}%)")
 
     def _on_worker_finished(self, cues: list[CaptionCue], lang: str) -> None:
         self.cues = cues
         self.enable_check.setChecked(True)
         self.transcribe_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.status_lbl.setText(f"Transcription complete! Language: {lang.upper()} · {len(cues)} cues generated.")
+        lang_display = LANG_NAME_MAP.get(lang.lower(), lang.upper()) if lang else "Detected"
+        self.status_lbl.setText(f"Transcription complete! Language: {lang_display} · {len(cues)} cues generated.")
         self.status_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
         self._populate_table()
 

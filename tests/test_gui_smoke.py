@@ -104,8 +104,10 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertEqual(res["bgm_end"], 45.0)
 
         # Check spinbox widths prevent text truncation
-        self.assertGreaterEqual(dlg.fade_in_spin.maximumWidth(), 95)
-        self.assertGreaterEqual(dlg.fade_out_spin.maximumWidth(), 95)
+        self.assertGreaterEqual(dlg.fade_in_spin.maximumWidth(), 110)
+        self.assertGreaterEqual(dlg.fade_out_spin.maximumWidth(), 110)
+        self.assertEqual(dlg.fade_in_spin.decimals(), 1)
+        self.assertEqual(dlg.fade_out_spin.decimals(), 1)
         self.assertGreaterEqual(dlg.bgm_start_spin.maximumWidth(), 110)
         self.assertGreaterEqual(dlg.bgm_end_spin.maximumWidth(), 125)
         dlg.close()
@@ -138,6 +140,28 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertIsNotNone(dlg.highlight_combo)
         self.assertIsNotNone(dlg.pos_slider)
         self.assertIsNotNone(dlg.table)
+
+        # Check friendly language names
+        eng_idx = dlg.lang_combo.findText("English")
+        self.assertGreaterEqual(eng_idx, 0)
+        self.assertEqual(dlg.lang_combo.itemData(eng_idx), "en")
+
+        auto_idx = dlg.lang_combo.findText("Auto-Detect")
+        self.assertGreaterEqual(auto_idx, 0)
+        self.assertIsNone(dlg.lang_combo.itemData(auto_idx))
+
+        # Check progress bar height prevents clipped % text
+        self.assertGreaterEqual(dlg.progress_bar.maximumHeight(), 18)
+
+        # Test progress display formatting
+        dlg._on_worker_progress(0.45, "Transcribing segment 2")
+        self.assertEqual(dlg.progress_bar.value(), 45)
+        self.assertIn("45%", dlg.status_lbl.text())
+
+        # Test finished display shows friendly language name
+        dlg._on_worker_finished([], "en")
+        self.assertIn("English", dlg.status_lbl.text())
+
         dlg.close()
 
 
