@@ -81,6 +81,92 @@ class TestGuiSmoke(unittest.TestCase):
         finally:
             win.close()
 
+    def test_split_editor_dialog_cuts_segments(self):
+        from clipcraft.gui import SplitEditorDialog
+
+        dlg = SplitEditorDialog(
+            None, "", {"duration": 8.0, "fps": 30.0},
+            cuts=[(2.0, 3.0)], in_point=0.0, out_point=8.0,
+        )
+        try:
+            # Existing cut arrives as a removed segment with split marks on its edges.
+            self.assertEqual(dlg.timeline.segments(), [(0.0, 2.0), (2.0, 3.0), (3.0, 8.0)])
+            self.assertTrue(dlg.timeline.segment_removed(1))
+            self.assertAlmostEqual(dlg.result_data()["duration"], 7.0, places=6)
+
+            # Delete the first segment: it merges with the existing cut.
+            dlg.timeline.selected = 0
+            dlg.delete_selected_segment()
+            self.assertEqual(dlg.timeline.cuts(), [(0.0, 3.0)])
+            self.assertAlmostEqual(dlg.result_data()["duration"], 5.0, places=6)
+
+            dlg.restore_all()
+            self.assertEqual(dlg.timeline.cuts(), [])
+            self.assertAlmostEqual(dlg.result_data()["duration"], 8.0, places=6)
+        finally:
+            dlg.close()
+
+    def test_split_editor_in_out_handles(self):
+        from clipcraft.gui import SplitEditorDialog
+
+        dlg = SplitEditorDialog(None, "", {"duration": 10.0, "fps": 25.0})
+        try:
+            dlg.timeline.playhead = 2.0
+            dlg.set_in_here()
+            dlg.timeline.playhead = 7.5
+            dlg.set_out_here()
+            data = dlg.result_data()
+            self.assertAlmostEqual(data["in"], 2.0)
+            self.assertAlmostEqual(data["out"], 7.5)
+            self.assertAlmostEqual(data["duration"], 5.5)
+
+            # A split that is not inside IN/OUT is rejected.
+            dlg.timeline.playhead = 1.0
+            self.assertFalse(dlg.timeline.add_split(1.0))
+        finally:
+            dlg.close()
+
+    def test_main_window_cut_timeline_helpers(self):
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            win.video_info = {"duration": 10.0, "fps": 30.0}
+            win._cut_regions = [(3.0, 5.0)]
+            win.in_spin.blockSignals(True)
+            win.out_spin.blockSignals(True)
+            win.in_spin.setValue(0.0)
+            win.out_spin.setValue(10.0)
+            win.in_spin.blockSignals(False)
+            win.out_spin.blockSignals(False)
+
+            self.assertAlmostEqual(win._kept_duration(), 8.0)
+            self.assertAlmostEqual(win._timeline_total(), 8.0)
+            # 4.0s of source sits 3.0s into the edited timeline of 8.0s.
+            self.assertEqual(win._source_to_slider(4.0), 3750)
+            self.assertAlmostEqual(win._slider_to_source(3750), 3.0, places=6)
+
+            win._apply_split_edit({"in": 0.0, "out": 10.0, "cuts": []})
+            self.assertEqual(win._cut_regions, [])
+            self.assertAlmostEqual(win._kept_duration(), 10.0)
+        finally:
+            win.close()
+
+    def test_timeline_paint_keeps_segments_after_a_cut(self):
+        """Regression: a leftover red brush made drawRect() flood kept segments."""
+        from PySide6.QtGui import QColor
+        from clipcraft.gui.split_dialog import SplitTimeline
+
+        tl = SplitTimeline(40.0)
+        tl.in_point, tl.out_point = 2.0, 36.0
+        tl.removed = [(10.0, 14.0)]
+        tl.boundaries = [10.0, 14.0]
+        tl.resize(800, 98)
+        image = tl.grab().toImage()
+
+        kept = image.pixelColor(int(tl._x_for(30.0)), tl.BAR_TOP + tl.BAR_HEIGHT // 2)
+        cut = image.pixelColor(int(tl._x_for(12.0)), tl.BAR_TOP + tl.BAR_HEIGHT // 2)
+        self.assertEqual(kept.name().lower(), "#2f4a66")
+        self.assertNotEqual(cut.name().lower(), "#2f4a66")
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)

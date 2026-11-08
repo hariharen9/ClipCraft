@@ -24,6 +24,7 @@
    - [7.5 Visual Source Crop System (`VisualSourceCropDialog`)](#75-visual-source-crop-system-visualsourcecropdialog)
    - [7.6 Canvas Items, Grips & Safe Zones (`canvas_items.py`)](#76-canvas-items-grips--safe-zones-canvas_itemspy)
    - [7.7 Layer Stack & Property Inspector](#77-layer-stack--property-inspector)
+   - [7.8 Split & Cut Studio (`split_dialog.py`)](#78-split--cut-studio-split_dialogpy)
 8. [Comprehensive API, Class & Function Index](#8-comprehensive-api-class--function-index)
 9. [Keyboard Shortcuts & Pro NLE Controls](#9-keyboard-shortcuts--pro-nle-controls)
 10. [Testing Suite & Quality Verification](#10-testing-suite--quality-verification)
@@ -73,6 +74,7 @@ ClipCraft/
 │   ├── assets.py                      # Procedural PIL asset generation for branding fallbacks
 │   ├── renderer.py                    # FFmpeg command builder, filter_complex graph generator, subprocess runner
 │   ├── preview.py                     # OpenCV/PIL software compositor mirroring FFmpeg in real time
+│   ├── segments.py                    # Cut-list math: kept spans, timeline<->source mapping, cut-aware stepping
 │   ├── batch_gui.py                   # Backward-compatibility import shim for BatchWindow
 │   │
 │   └── gui/                           # Modular PySide6 GUI Package
@@ -81,6 +83,7 @@ ClipCraft/
 │       ├── worker.py                  # QThread background worker for single clip render
 │       ├── canvas_items.py            # QGraphicsItems: LayerItem, HandleItem, SafeZoneOverlayItem
 │       ├── crop_dialog.py             # VisualSourceCropDialog & VisualCropBoxItem
+│       ├── split_dialog.py            # SplitEditorDialog & SplitTimeline: split, delete segments, re-pick IN/OUT
 │       ├── layer_stack.py             # LayerStackWidget (Z-order reordering, eye toggles, badges)
 │       ├── transport_bar.py           # TransportWidget (scrubber, shuttle buttons, speed, IN/OUT)
 │       ├── inspector.py               # LayerInspectorWidget (sidebar for properties, typography, geometry)
@@ -99,10 +102,12 @@ ClipCraft/
 │   ├── general_cam.json               # Generic gaming layout with dedicated top facecam
 │   └── general_nocam.json             # Gameplay-focused clean layout
 │
-├── tests/                             # Automated Test Suite (All 22 tests passing)
+├── tests/                             # Automated Test Suite (all green)
 │   ├── __init__.py                    # Test package marker
-│   ├── test_cli.py                    # CLI arg parsing & time format conversion (MM:SS, HH:MM:SS)
-│   ├── test_gui_smoke.py              # Smoke tests for Qt widgets, instantiation, and dialogs
+│   ├── test_cli.py                    # CLI arg parsing, time formats (MM:SS, HH:MM:SS), --cut ranges
+│   ├── test_gui_smoke.py              # Smoke tests for Qt widgets, instantiation, dialogs, split timeline
+│   ├── test_segments.py               # Cut math: normalization, kept spans, timeline mapping, cut-aware stepping
+│   ├── test_render_cuts.py            # Trim/concat graph assembly + frame-exact end-to-end cut render
 │   ├── test_state.py                  # Atomic state persistence, corruption handling, path resolution
 │   ├── test_templates.py              # Template schema validation & config cloning
 │   └── test_tokens.py                 # Dynamic filename token substitution & formatting
@@ -246,7 +251,7 @@ Dynamic patterns configured in `output_pattern` are resolved during export:
 | `{game}` | Active template identifier | `valorant` |
 | `{in}` | Trim IN timestamp | `0s`, `15s`, `1m20s` |
 | `{out}` | Trim OUT timestamp | `35s`, `2m05s` |
-| `{dur}` | Clip duration (`out - in`) | `20s`, `45s` |
+| `{dur}` | Result duration (`out - in` minus cut regions) | `20s`, `45s` |
 | `{date}` | Current system date (`YYYY-MM-DD`) | `2026-11-07` |
 | `{time}` | Current system time (`HHMMSS`) | `143015` |
 | `{res}` | Canvas resolution string | `1080x1920` |
@@ -319,10 +324,28 @@ ffprobe -v error -show_streams -show_format -of json <video_path>
 ```
 Extracts `duration`, `width`, `height`, calculated `fps` (`num / den`), codec, and audio stream presence.
 
+#### Cut Preprocessing (`build_cut_filter`)
+Before any layout work, the source is reduced to the kept spans (IN/OUT minus the user's cut regions):
+
+```
+[0:v]trim=end=2.000000,setpts=PTS-STARTPTS[cv0]
+[0:a]atrim=end=2.000000,asetpts=PTS-STARTPTS[ca0]
+[0:v]trim=start=4.000000:end=8.000000,setpts=PTS-STARTPTS[cv1]
+[0:a]atrim=start=4.000000:end=8.000000,asetpts=PTS-STARTPTS[ca1]
+[cv0][cv1]concat=n=2:v=1:a=0[vcut]
+[ca0][ca1]concat=n=2:v=0:a=1[acut]
+```
+
+- Span times are **relative to the IN point** because the input is seeked with `-ss <in>`.
+- The first span omits `start=0`: after input seeking, frame 0 can carry a tiny negative PTS and an explicit `start=0` would drop it.
+- Audio must be trimmed and concatenated too, using `atrim` + **`asetpts`** (`setpts` on an audio pad makes FFmpeg refuse to link the graph). Missing this is the classic A/V desync bug.
+- `build_cut_filter()` returns `("", "0:v", "0:a")` when the cut list has no effect inside `[start, end]`, so an uncut render produces a byte-identical graph.
+- The total `-t` duration is the sum of the kept spans, not `end - start`.
+
 #### Filter Graph Synthesis (`build_filter_complex`)
-1. Slices primary video stream `[0:v]` into $N+1$ outputs using `split`:
+1. Slices the incoming video stream (the cut output `[vcut]`, or `[0:v]` when uncut) into $N+1$ outputs using `split`:
    ```
-   [0:v]fps=60,split=3[vsrc0][vsrc1][vsrc2]
+   [vcut]fps=60,split=3[vsrc0][vsrc1][vsrc2]
    ```
 2. **Background Branch (`vsrc0`)**:
    - Downscaled to 50% ($540 \times 960$) to minimize blur compute time.
@@ -381,7 +404,7 @@ Maintains pixel-perfect parity with FFmpeg inside Python:
 
 ### 7.1 Studio Editor (`ClipCraftWindow`)
 A 3-panel responsive layout:
-- **Left Panel**: Transport controls, background look sliders, Sound & Music launcher card (`AudioStudioDialog`), export pattern settings, render presets, progress bar.
+- **Left Panel**: Transport controls, **Split & Cut…** launcher, background look sliders, Sound & Music launcher card (`AudioStudioDialog`), export pattern settings, render presets, progress bar.
 - **Center Panel**: Canvas preview with `QGraphicsScene` and `QGraphicsView`, grips toggle, safe-zones toggle, sharp preview toggle.
 - **Right Panel**: Layer inspector with layer list, eye toggles, typography controls, geometry spinboxes, source crop controls, and undo/redo history.
 
@@ -430,6 +453,15 @@ To maintain smooth 60fps playback with full sound synchronization:
 - **`LayerStackWidget`**: Reorders layers via drag-and-drop or Forward/Backward buttons. Toggles visibility with vector eye icons. Displays type badges: `[VID]`, `[TXT]`, `[IMG]`.
 - **`LayerInspectorWidget`**: Dynamic property inspector. Automatically toggles between Typography controls (for text layers), Asset Pickers (for image layers), and Crop Spinboxes (for video layers).
 
+### 7.8 Split & Cut Studio (`split_dialog.py`)
+- Opened from the **Split & Cut…** button under the transport panel. It is the only way to remove footage from the *middle* of a clip; IN/OUT alone can only describe one contiguous range.
+- **`SplitTimeline`** (custom-painted `QWidget`): shows the whole recording with kept segments in navy, removed segments in red with a dashed "CUT" border, split marks as dashed vertical lines, draggable IN (green) / OUT (red) handles, and the playhead. Mouse press selects the segment under the cursor, which is what **Delete segment** acts on.
+- **Model**: `boundaries` (split points) + `removed` (removed ranges). `segments()` is derived, so IN/OUT and split points always stay consistent. `toggle_removed()` marks or restores one segment.
+- **Result**: `result_data()` returns `{"in", "out", "cuts", "duration"}`; the main window stores `cuts` in `self._cut_regions` and hands them to the renderer.
+- **Preview**: decodes frames with OpenCV (`CAP_PROP_POS_FRAMES`), with a 55 ms debounce so dragging the playhead stays responsive; playback hops over removed regions.
+- **Keyboard**: `Space` play/pause, `←`/`→` step a frame, `S` split at playhead, `Del`/`Backspace` delete selected segment, `I`/`O` set IN/OUT.
+- Painting detail: `QPainter.drawRect()` fills with the *current brush*. Always set `Qt.BrushStyle.NoBrush` before outline-only draws, otherwise a leftover brush floods neighbouring rectangles.
+
 ---
 
 ## 8. Comprehensive API, Class & Function Index
@@ -451,9 +483,19 @@ To maintain smooth 60fps playback with full sound synchronization:
 ### Module: `clipcraft.renderer`
 - `find_ffmpeg() -> str`: Locates `ffmpeg` on system `PATH`.
 - `probe_video(path: str | Path, ffprobe: str | None) -> dict[str, Any]`: Extracts stream metrics via `ffprobe`.
-- `build_filter_complex(config, config_path, video_info) -> tuple[str, list[Path]]`: Compiles FFmpeg filter string.
-- `build_ffmpeg_command(video_path, output_path, start, end, config, config_path, encoder) -> tuple[list[str], float]`: Assembles complete FFmpeg CLI command.
-- `run_render(...) -> Path`: Executes subprocess, streams progress, falls back to CPU on NVENC failure.
+- `build_cut_filter(start, end, cuts, has_audio) -> tuple[str, str, str]`: Trim/concat prelude; returns `(chains, video_label, audio_label)`.
+- `build_filter_complex(config, config_path, video_info, source_v="0:v") -> tuple[str, list[Path]]`: Compiles FFmpeg filter string.
+- `build_audio_filter_graph(video_info, duration, audio_config, bgm_input_index, source_a="0:a") -> tuple[str, bool]`: Mixes/ducks/fades audio from an arbitrary source label.
+- `build_ffmpeg_command(..., audio_config=None, cuts=None) -> tuple[list[str], float]`: Assembles the CLI command; the returned duration is the kept length.
+- `run_render(..., audio_config=None, cuts=None) -> Path`: Executes subprocess, streams progress, falls back to CPU on NVENC failure.
+
+### Module: `clipcraft.segments`
+- `normalize_cuts(cuts, duration=None) -> list[Cut]`: Clamp, sort, merge and drop zero-length cut regions.
+- `kept_spans(start, end, cuts) -> list[Cut]`: Footage inside IN/OUT that is not cut away.
+- `timeline_duration(start, end, cuts) -> float`: Length of the result (`end - start` minus cuts).
+- `source_to_timeline(t, start, end, cuts) -> float` / `timeline_to_source(offset, ...) -> float`: Scrubber mapping between edited and source time.
+- `cut_containing(t, cuts) -> Cut | None`, `next_kept_time`, `previous_kept_time`: Removed-region lookup and snapping.
+- `step_time(t, delta, start, end, cuts) -> float`: Cut-aware frame stepping / shuttle advance.
 
 ### Module: `clipcraft.captions`
 - `CaptionWord`: Dataclass storing word string, start timestamp, end timestamp, and probability.
@@ -480,6 +522,8 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `BatchWindow`: Multi-clip queue studio.
 - `VisualSourceCropDialog`: Full-screen 16:9 interactive crop dialog.
 - `AudioStudioDialog`: Dedicated sound, music trimming, volume, and ducking studio.
+- `CaptionStudioDialog`: Local Whisper transcription and karaoke caption styling studio.
+- `SplitEditorDialog` / `SplitTimeline`: Split, delete and restore middle segments, then re-pick IN/OUT.
 - `LayerStackWidget`: Reorderable layer list with eye toggles.
 - `LayerInspectorWidget`: Sidebar property inspector.
 - `TransportWidget`: Scrubber and playback transport bar.
@@ -504,6 +548,10 @@ To maintain smooth 60fps playback with full sound synchronization:
 | **`Ctrl + Z`** | Main | Undo last canvas, layout, crop, or text change |
 | **`Ctrl + Shift + Z`** | Main | Redo last undone change |
 | **`Shift + Drag Grip`** | Canvas | Constrain layer aspect ratio while resizing |
+| **`S`** | Split & Cut | Split the clip at the playhead |
+| **`Delete` / `Backspace`** | Split & Cut | Remove (or restore) the selected segment |
+| **`I` / `O`** | Split & Cut | Set IN / OUT at the playhead |
+| **`Space` / `←` / `→`** | Split & Cut | Play-pause / step one frame |
 | **`Delete`** | Batch | Remove selected clip from queue |
 
 ---
@@ -516,8 +564,10 @@ Run the entire automated test suite:
 ```
 
 ### Test Coverage Summary:
-- `tests/test_cli.py`: Verifies time parsing (seconds, MM:SS, HH:MM:SS), argument parsing, default output naming.
-- `tests/test_gui_smoke.py`: Headless Qt tests verifying widget instantiation, transport states, layer selection, and dialogs.
+- `tests/test_cli.py`: Verifies time parsing (seconds, MM:SS, HH:MM:SS), `--cut` range parsing, argument parsing, default output naming.
+- `tests/test_gui_smoke.py`: Headless Qt tests verifying widget instantiation, transport states, layer selection, dialogs, split timeline model and painting.
+- `tests/test_segments.py`: Cut normalization, kept spans, timeline mapping and cut-aware stepping (including exact-boundary steps).
+- `tests/test_render_cuts.py`: Trim/concat graph structure plus a frame-exact end-to-end render that decodes grey-coded frames to prove the removed ones are gone.
 - `tests/test_state.py`: Verifies state resolution (portable vs OS directory), atomic file write/swap, and corrupted JSON resilience.
 - `tests/test_templates.py`: Enforces schema validity, layer types, and rect geometry across all files in `templates/`.
 - `tests/test_tokens.py`: Tests `format_token_time` and token substitution patterns.
@@ -533,6 +583,8 @@ Run the entire automated test suite:
 5. **Backwards Compatibility**: Maintain compatibility shims when restructuring:
    - `clipcraft.batch_gui` shim for `clipcraft.gui.batch_window`.
 6. **Launcher & Virtualenv Resilience**: Batch launchers (`run_gui.bat`, `run_batch.bat`, `render.bat`, `install.bat`) must directly invoke `%~dp0.venv\Scripts\python.exe` to avoid executing system Python (e.g. Python 3.13) which may lack dependencies. Launchers must keep the window open (`pause`) on non-zero exit codes. Unhandled crashes and GUI startup errors must be written to `clipcraft.log` via `_setup_crash_logging()` in `clipcraft.py`.
+7. **Cuts Are Pairs of Trims**: A cut region must be removed from **both** video and audio in the same filter graph (`trim`/`setpts` and `atrim`/`asetpts`), and the exported duration must be `timeline_duration()`, never `out - in`. Any new feature that seeks the source (playback, scrubbing, stepping, thumbnails) must go through `clipcraft.segments` so removed regions are skipped consistently.
+8. **No Hidden Removed Footage**: `_play_tick`, `_reverse_tick`, `step_frames` and the scrubber must never rest inside a cut. If you add a new seek path, route it through `next_kept_time`/`previous_kept_time`/`step_time`.
 
 ---
 

@@ -11,6 +11,7 @@ clipcraft_script = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(clipcraft_script)
 
 parse_time = clipcraft_script.parse_time
+parse_cut = clipcraft_script.parse_cut
 build_parser = clipcraft_script.build_parser
 default_output = clipcraft_script.default_output
 
@@ -63,6 +64,22 @@ class TestCli(unittest.TestCase):
         self.assertAlmostEqual(args.out_time, 75.0)
         self.assertEqual(args.encoder, "nvenc")
         self.assertEqual(args.output, "out.mp4")
+
+    def test_parse_cut_ranges(self):
+        self.assertEqual(parse_cut("12.5-18"), (12.5, 18.0))
+        self.assertEqual(parse_cut("0:12-0:18"), (12.0, 18.0))
+        self.assertEqual(parse_cut("1..2.5"), (1.0, 2.5))
+
+    def test_parse_cut_invalid(self):
+        for invalid in ("12.5", "10-5", "abc-def", ""):
+            with self.subTest(val=invalid):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    parse_cut(invalid)
+
+    def test_parser_collects_repeated_cuts(self):
+        parser = build_parser()
+        args = parser.parse_args(["clip.mp4", "--cut", "2-3", "--cut", "5-6.5"])
+        self.assertEqual(args.cut, [(2.0, 3.0), (5.0, 6.5)])
 
     def test_default_output(self):
         p = Path("C:/Recordings/gameplay.mp4")

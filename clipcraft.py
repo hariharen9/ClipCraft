@@ -7,6 +7,7 @@ from pathlib import Path
 from clipcraft.assets import ensure_assets
 from clipcraft.config import load_config
 from clipcraft.renderer import run_render, probe_video
+from clipcraft.segments import normalize_cuts
 
 
 def parse_time(value: str) -> float:
@@ -36,6 +37,27 @@ def parse_time(value: str) -> float:
         ) from exc
 
 
+def parse_cut(value: str) -> tuple[float, float]:
+    """Parse a removed region written as START-END (seconds or MM:SS)."""
+    text = value.strip()
+    for separator in ("..", "-"):
+        if separator in text:
+            left, right = text.split(separator, 1)
+            try:
+                start = parse_time(left)
+                end = parse_time(right)
+            except argparse.ArgumentTypeError as exc:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid cut '{value}'. Use START-END, e.g. 12.5-18 or 0:12-0:18."
+                ) from exc
+            if end <= start:
+                raise argparse.ArgumentTypeError(f"Cut '{value}' ends before it starts")
+            return start, end
+    raise argparse.ArgumentTypeError(
+        f"Invalid cut '{value}'. Use START-END, e.g. 12.5-18 or 0:12-0:18."
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="clipcraft",
@@ -57,6 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gameplay-volume", type=float, default=None, help="Gameplay volume multiplier (0.0 to 2.0, default: 1.0)")
     parser.add_argument("--no-ducking", action="store_true", help="Disable auto-ducking on background music")
     parser.add_argument("--audio-fade", type=float, default=None, help="Duration in seconds for audio fade in and out (default: 0.5)")
+    parser.add_argument(
+        "--cut", type=parse_cut, action="append", metavar="START-END",
+        help="Remove a region inside the IN/OUT range (repeatable), e.g. --cut 12.5-18",
+    )
     parser.add_argument("--print-command", action="store_true", help="Print the generated FFmpeg command and exit")
     return parser
 
@@ -175,11 +201,12 @@ def main(argv: list[str] | None = None) -> int:
             config.setdefault("audio", {}).update(audio_config)
 
         output_path = Path(args.output).expanduser().resolve() if args.output else default_output(video_path, game_id)
+        cuts = normalize_cuts(args.cut or [], info["duration"])
         if args.print_command:
             from clipcraft.renderer import build_ffmpeg_command
             command, duration = build_ffmpeg_command(
                 video_path, output_path, args.in_time, args.out_time,
-                config, config_path, args.encoder, audio_config=config.get("audio")
+                config, config_path, args.encoder, audio_config=config.get("audio"), cuts=cuts
             )
             print(" ".join(f'"{part}"' if " " in part else part for part in command))
             print(f"\nClip duration: {duration:.3f}s | Source: {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
@@ -187,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"ClipCraft · {game_id.title()} · {info['width']}x{info['height']} @ {info['fps']:.2f} fps")
         print(f"IN {args.in_time:.3f}s → OUT {args.out_time:.3f}s ({args.out_time - args.in_time:.3f}s)")
+        if cuts:
+            print("Cuts removed: " + ", ".join(f"{a:.3f}s-{b:.3f}s" for a, b in cuts))
         print(f"Output: {output_path}")
 
         last_percent = -1
@@ -199,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
 
         rendered = run_render(
             video_path, output_path, args.in_time, args.out_time,
-            config, config_path, args.encoder, on_progress, audio_config=config.get("audio")
+            config, config_path, args.encoder, on_progress, audio_config=config.get("audio"),
+            cuts=cuts,
         )
         print(f"\n\nDone: {rendered}")
         return 0

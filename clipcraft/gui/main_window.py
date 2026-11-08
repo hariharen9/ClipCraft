@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import os
 import subprocess
 import time
@@ -78,6 +79,16 @@ from ..config import (
 )
 from ..preview import layer_preview_image, render_background, to_qimage_array
 from ..renderer import probe_video
+from ..segments import (
+    cut_containing,
+    next_kept_time,
+    normalize_cuts,
+    previous_kept_time,
+    source_to_timeline,
+    step_time,
+    timeline_duration,
+    timeline_to_source,
+)
 
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .constants import (
@@ -97,6 +108,7 @@ from .constants import (
 from .crop_dialog import VisualSourceCropDialog
 from .audio_dialog import AudioStudioDialog
 from .caption_dialog import CaptionStudioDialog
+from .split_dialog import SplitEditorDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
@@ -223,6 +235,8 @@ class ClipCraftWindow(QMainWindow):
         self._frame_index = 0
         self._scrubbing = False
         self._reverse_buffer: list = []
+        # Removed regions (absolute source timestamps) from the Split & Cut studio.
+        self._cut_regions: list[tuple[float, float]] = []
         audio_cfg = self.config.get("audio", {})
         self.audio_config: dict[str, Any] = dict(audio_cfg)
         self.bgm_path: str | None = self.audio_config.get("bgm_path")
@@ -358,6 +372,23 @@ class ClipCraftWindow(QMainWindow):
         self.out_spin.valueChanged.connect(self._validate_trim)
 
         layout.addWidget(self.transport)
+
+        self.split_btn = QPushButton(" Split & Cut…")
+        self.split_btn.setFixedHeight(32)
+        self.split_btn.setIcon(qta.icon("fa5s.cut", color="#ffffff"))
+        self.split_btn.setToolTip(
+            "Open the split editor: cut unwanted sections out of the middle, then re-pick IN/OUT"
+        )
+        self.split_btn.setStyleSheet(
+            "QPushButton { background-color: #2b3340; color: #ffffff; border: 1px solid #3d4757;"
+            " border-radius: 4px; font-weight: bold; }"
+            " QPushButton:hover { background-color: #354052; }"
+            " QPushButton:disabled { color: #7b8494; }"
+        )
+        self.split_btn.clicked.connect(self.open_split_dialog)
+        self.split_btn.setEnabled(False)
+        layout.addWidget(self.split_btn)
+        self._sync_split_button()
 
         bg_group = QGroupBox("Background look")
         bg_form = QFormLayout(bg_group)
@@ -942,6 +973,8 @@ class ClipCraftWindow(QMainWindow):
         self.in_spin.blockSignals(False)
         self.out_spin.blockSignals(False)
         self.playhead = 0
+        self._cut_regions = []
+        self._sync_split_button()
         self.position_slider.setValue(0)
         self._update_output_path()
         self._frame_index = 0
@@ -1035,16 +1068,103 @@ class ClipCraftWindow(QMainWindow):
     def _position_changed(self, value: int):
         if not self.video_info:
             return
-        duration = self.video_info["duration"]
-        self.playhead = duration * value / 10000.0
+        self.playhead = self._slider_to_source(value)
         self._update_time_label()
 
     def _update_time_label(self):
-        duration = self.video_info["duration"]
+        if not self.video_info:
+            return
+        total = self._timeline_total() or float(self.video_info["duration"])
         frame = int(round(self.playhead * self._effective_fps()))
         self.frame_label.setText(
-            f"{self._format_time(self.playhead)} / {self._format_time(duration)} · frame {frame}"
+            f"{self._format_time(self.playhead)} / {self._format_time(total)} · frame {frame}"
         )
+
+    # -- cut regions & edited timeline -------------------------------------
+
+    def _timeline_total(self) -> float:
+        """Length of the whole clip once cut regions are closed up."""
+        duration = float((self.video_info or {}).get("duration", 0.0) or 0.0)
+        return timeline_duration(0.0, duration, self._cut_regions)
+
+    def _kept_duration(self) -> float:
+        """Length of the exported result for the current IN/OUT and cuts."""
+        return timeline_duration(self.in_spin.value(), self.out_spin.value(), self._cut_regions)
+
+    def _slider_to_source(self, value: int) -> float:
+        """Scrubber position (0-10000 of the edited timeline) → source timestamp."""
+        if not self.video_info:
+            return 0.0
+        total = self._timeline_total()
+        if total <= 1e-9:
+            return 0.0
+        offset = total * max(0, min(10000, int(value))) / 10000.0
+        return timeline_to_source(
+            offset, 0.0, float(self.video_info["duration"]), self._cut_regions
+        )
+
+    def _source_to_slider(self, source_time: float) -> int:
+        """Source timestamp → scrubber position on the edited timeline."""
+        if not self.video_info:
+            return 0
+        total = self._timeline_total()
+        if total <= 1e-9:
+            return 0
+        offset = source_to_timeline(
+            source_time, 0.0, float(self.video_info["duration"]), self._cut_regions
+        )
+        return int(max(0.0, min(1.0, offset / total)) * 10000)
+
+    def _sync_split_button(self) -> None:
+        if hasattr(self, "split_btn"):
+            self.split_btn.setEnabled(self.video_path is not None)
+
+    def open_split_dialog(self) -> None:
+        """Open the split/cut studio for the loaded recording."""
+        if not self.video_path or not self.video_info:
+            self.statusBar().showMessage("Load a recording before opening the split editor")
+            return
+        self._stop_playback()
+        dialog = SplitEditorDialog(
+            self,
+            self.video_path,
+            self.video_info,
+            self._cut_regions,
+            self.in_spin.value(),
+            self.out_spin.value(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_split_edit(dialog.result_data())
+
+    def _apply_split_edit(self, data: dict[str, Any]) -> None:
+        duration = float((self.video_info or {}).get("duration", 0.0) or 0.0)
+        self._cut_regions = normalize_cuts(data.get("cuts", []), duration)
+
+        self.in_spin.blockSignals(True)
+        self.out_spin.blockSignals(True)
+        self.in_spin.setValue(float(data.get("in", 0.0)))
+        self.out_spin.setValue(float(data.get("out", duration)))
+        self.in_spin.blockSignals(False)
+        self.out_spin.blockSignals(False)
+
+        self._validate_trim()
+        self._update_output_path()
+
+        target = next_kept_time(self.in_spin.value(), self._cut_regions)
+        self._frame_index = -1
+        if self._seek_to_index(int(round(target * self._effective_fps()))):
+            self._sync_playhead_ui()
+            self._update_frame_layers()
+        else:
+            self.refresh_canvas()
+
+        count = len(self._cut_regions)
+        if count:
+            self.statusBar().showMessage(
+                f"{count} cut region{'s' if count != 1 else ''} · output {self._format_time(self._kept_duration())}"
+            )
+        else:
+            self.statusBar().showMessage("No cuts — the full IN/OUT range will render")
 
     # -- playback engine ---------------------------------------------------
 
@@ -1104,13 +1224,14 @@ class ClipCraftWindow(QMainWindow):
         if not self.video_info:
             return
         self.position_slider.blockSignals(True)
-        self.position_slider.setValue(int(self.playhead / max(self.video_info["duration"], 0.001) * 10000))
+        self.position_slider.setValue(self._source_to_slider(self.playhead))
         self.position_slider.blockSignals(False)
         self._update_time_label()
 
     def _start_playback(self, direction: int = 1, reset_speed: bool = False) -> None:
         if self.capture is None or not self.video_info:
             return
+        self.playhead = next_kept_time(self.playhead, self._cut_regions)
         self._playing = True
         self._play_direction = 1 if direction >= 0 else -1
         if reset_speed:
@@ -1214,6 +1335,11 @@ class ClipCraftWindow(QMainWindow):
             if self.playhead >= self.out_spin.value() - 1e-9:
                 updated |= self._seek_to_index(in_frame)  # loop back to IN
                 continue
+            skip_to = next_kept_time(self.playhead, self._cut_regions)
+            if skip_to > self.playhead + 1e-9:
+                # The playhead walked into a removed region: jump past it in one seek.
+                updated |= self._seek_to_index(int(math.ceil(skip_to * fps)))
+                continue
             ok, frame = self.capture.read()
             if not ok:
                 updated |= self._seek_to_index(in_frame)  # end of stream → loop
@@ -1248,6 +1374,12 @@ class ClipCraftWindow(QMainWindow):
             self._frame_index -= 1
             self.playhead = self._frame_index / fps
             self._read_backlog -= 1.0
+            if cut_containing(self.playhead, self._cut_regions) is not None:
+                # Rewinding into a removed region skips to the frame before it.
+                self._reverse_buffer.clear()
+                cut_start = previous_kept_time(self.playhead, self._cut_regions)
+                updated |= self._seek_to_index(max(0, int(math.floor(cut_start * fps)) - 1))
+                continue
             updated = True
         if updated:
             self._sync_playhead_ui()
@@ -1316,7 +1448,11 @@ class ClipCraftWindow(QMainWindow):
             return
         if self._playing:
             self._stop_playback()
-        if self._seek_to_index(self._frame_index + delta):
+        fps = self._effective_fps()
+        target = step_time(
+            self.playhead, delta / fps, 0.0, float(self.video_info["duration"]), self._cut_regions
+        )
+        if self._seek_to_index(int(round(target * fps))):
             self._sync_playhead_ui()
             self._update_frame_layers()
 
@@ -1364,20 +1500,28 @@ class ClipCraftWindow(QMainWindow):
         self.refresh_canvas()
 
     def set_in_from_playhead(self):
-        self.in_spin.setValue(min(self.playhead, max(0.0, self.out_spin.value() - 0.05)))
+        value = next_kept_time(self.playhead, self._cut_regions)
+        self.in_spin.setValue(min(value, max(0.0, self.out_spin.value() - 0.05)))
         self.statusBar().showMessage(f"IN set to {self._format_time(self.in_spin.value())}")
 
     def set_out_from_playhead(self):
-        self.out_spin.setValue(max(self.playhead, self.in_spin.value() + 0.05))
+        value = previous_kept_time(self.playhead, self._cut_regions)
+        self.out_spin.setValue(max(value, self.in_spin.value() + 0.05))
         self.statusBar().showMessage(f"OUT set to {self._format_time(self.out_spin.value())}")
 
     def _validate_trim(self):
         if self.out_spin.value() <= self.in_spin.value():
             self.render_button.setEnabled(False)
             self.render_status.setText("OUT must be later than IN")
+        elif self.video_info and self._kept_duration() <= 1e-6:
+            self.render_button.setEnabled(False)
+            self.render_status.setText("Everything in this range is cut away")
         else:
             self.render_button.setEnabled(self.video_path is not None)
-            self.render_status.setText("Ready to render")
+            if self._cut_regions:
+                self.render_status.setText(f"Ready · {self._format_time(self._kept_duration())}")
+            else:
+                self.render_status.setText("Ready to render")
 
     def _active_layer_name(self) -> str:
         name = self.layer_stack.current_layer_name()
@@ -1989,6 +2133,12 @@ class ClipCraftWindow(QMainWindow):
         if end <= start:
             QMessageBox.warning(self, "Invalid trim", "OUT must be later than IN.")
             return
+        if self._kept_duration() <= 1e-6:
+            QMessageBox.warning(
+                self, "Nothing left to render",
+                "Every part of this range is cut away. Restore a segment in Split & Cut first.",
+            )
+            return
         output = self.output_edit.text().strip()
         if not output:
             self.browse_output()
@@ -2005,7 +2155,7 @@ class ClipCraftWindow(QMainWindow):
         self.render_status.setText("Starting FFmpeg…")
         self.worker = RenderWorker(
             self.video_path, output, start, end, self.config, self.config_path, encoder,
-            audio_config=self.config.get("audio")
+            audio_config=self.config.get("audio"), cuts=self._cut_regions,
         )
         self.worker.progress_signal.connect(self._render_progress)
         self.worker.finished_signal.connect(self._render_finished)
@@ -2117,7 +2267,7 @@ class ClipCraftWindow(QMainWindow):
         out_val = self.out_spin.value() if hasattr(self, "out_spin") else 0.0
         in_str = _format_token_time(in_val)
         out_str = _format_token_time(out_val)
-        dur_str = _format_token_time(max(0.0, out_val - in_val))
+        dur_str = _format_token_time(timeline_duration(in_val, out_val, self._cut_regions))
         now = time.strftime("%Y-%m-%d")
         now_time = time.strftime("%H%M%S")
         canvas = self.config.get("canvas", {})

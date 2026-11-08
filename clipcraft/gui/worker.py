@@ -31,7 +31,8 @@ class RenderWorker(QThread):
 
     def __init__(self, video: str, output: str, start: float, end: float,
                  config: dict[str, Any], config_path: Path, encoder: str,
-                 audio_config: dict[str, Any] | None = None):
+                 audio_config: dict[str, Any] | None = None,
+                 cuts: list[tuple[float, float]] | None = None):
         super().__init__()
         self.video = video
         self.output = output
@@ -41,6 +42,7 @@ class RenderWorker(QThread):
         self.config_path = config_path
         self.encoder = encoder
         self.audio_config = copy.deepcopy(audio_config) if audio_config else None
+        self.cuts = list(cuts or [])
 
     def run(self):
         try:
@@ -49,6 +51,7 @@ class RenderWorker(QThread):
                 self.config, self.config_path, self.encoder,
                 progress=lambda value, message: self.progress_signal.emit(value, message),
                 audio_config=self.audio_config,
+                cuts=self.cuts,
             )
             self.finished_signal.emit(True, str(result))
         except Exception as exc:  # The GUI displays the FFmpeg diagnostic to the user.

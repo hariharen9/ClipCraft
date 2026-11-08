@@ -47,6 +47,7 @@ run_gui.bat
 * **Built-in Styled Text Overlays**: Add catchy captions, hook titles, or social handles directly inside the editor—complete with bold fonts, color pickers, and outline strokes.
 * **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **Rainbow Six Siege**, **Counter-Strike 2**, **Apex Legends**, **Call of Duty / Warzone**, **Fortnite**, **League of Legends**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
 * **Smart Audio & BGM Engine**: Drag & drop any `.mp3` or `.wav` track. Automatically ducks background music when voice callouts or gunshots peak, plus smooth 0.5s fades at clip start and end.
+* **Split & Cut Anywhere**: One IN/OUT pair is not always enough. Open the **Split & Cut** studio to split a recording at any point, delete dead time, queue wipes, or silent stretches from the middle, and keep the rest — playback and export skip straight over the removed parts.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 
@@ -85,6 +86,14 @@ Double-click **`run_gui.bat`** to open the main studio editor.
 
 ### 📐 Interactive Visual Source Crop
 Forget entering manual pixel numbers. Opening the visual cropper displays the full widescreen source frame. Simply drag and scale the crop box over what matters—your facecam, minimap, inventory, or killfeed—and watch your 9:16 canvas update simultaneously.
+
+### ✂️ Split & Cut Studio
+Need a moment that starts at 0:10 but has a 6-second pause at 0:22? Trim the boring middle out instead of settling for one contiguous range.
+- **Split anywhere**: drop cut points on the timeline and the clip becomes selectable segments.
+- **Delete / restore**: remove a segment from the middle and it turns into a red "CUT" block; restore it any time before you export.
+- **IN / OUT on what is left**: drag the green/red handles (or press `I` / `O`) around the footage you actually want.
+- **True preview**: the main scrubber, frame stepping, shuttle playback and the render itself all skip the removed regions, so what you preview is what you export.
+- **Headless parity**: `--cut 22-28` on the command line removes the same region for scripted batches.
 
 ### 🎨 Layer Stack & Direct Text Engine
 - **Visual Layer Hierarchy**: Drag and drop layers to bring elements forward or send them backward, with quick one-click eye toggles.

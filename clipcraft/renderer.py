@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Callable, Any
+from typing import Any, Callable, Sequence
 
 from PIL import Image as PILImage
 
 from .config import contain_fit, image_content_info, resolve_asset
 from .preview import render_text_image
+from .segments import Cut, kept_spans, normalize_cuts
 
 ProgressCallback = Callable[[float, str], None]
 
@@ -106,6 +107,7 @@ def build_filter_complex(
     config: dict[str, Any],
     config_path: Path,
     video_info: dict[str, Any],
+    source_v: str = "0:v",
 ) -> tuple[str, list[Path]]:
     canvas = config.get("canvas", {})
     out_w, out_h = int(canvas.get("width", 1080)), int(canvas.get("height", 1920))
@@ -130,7 +132,7 @@ def build_filter_complex(
 
     split_labels = [f"vsrc{i}" for i in range(len(video_layers) + 1)]
     split_outputs = "".join(f"[{label}]" for label in split_labels)
-    parts = [f"[0:v]fps={fps},split={len(split_labels)}{split_outputs}"]
+    parts = [f"[{source_v}]fps={fps},split={len(split_labels)}{split_outputs}"]
 
     # Blurred full-frame background. It is intentionally downscaled before blur to keep 60 fps practical.
     bg_blur = max(1, int(background.get("blur", 22)))
@@ -253,13 +255,77 @@ def build_filter_complex(
     return ";".join(parts), overlay_inputs
 
 
+def _trim_segment(filter_name: str, start: float, end: float) -> str:
+    """``trim``/``atrim`` for one kept span, with ``start=0`` omitted.
+
+    Leaving ``start`` off the first span matters: with input seeking the first
+    decoded frame can carry a tiny negative PTS, and an explicit ``start=0``
+    would silently drop it.
+    """
+    options: list[str] = []
+    if start > 1e-6:
+        options.append(f"start={start:.6f}")
+    options.append(f"end={max(start, end):.6f}")
+    return f"{filter_name}=" + ":".join(options)
+
+
+def build_cut_filter(
+    start: float,
+    end: float,
+    cuts: Sequence[Cut] | None,
+    has_audio: bool,
+) -> tuple[str, str, str]:
+    """Build the trim/concat prelude that removes cut regions.
+
+    Returns ``(filter_chains, video_label, audio_label)``. When the cut list has
+    no effect inside ``[start, end]`` the chains are empty and the raw input
+    labels are returned, so the graph stays byte-identical to a normal render.
+    """
+    spans = kept_spans(start, end, cuts)
+    if not spans:
+        raise ValueError("Every part of the clip is cut away — keep at least one segment")
+
+    untouched = (
+        len(spans) == 1
+        and abs(spans[0][0] - start) < 1e-6
+        and abs(spans[0][1] - end) < 1e-6
+    )
+    if untouched:
+        return "", "0:v", "0:a"
+
+    relative = [(span_start - start, span_end - start) for span_start, span_end in spans]
+    chains: list[str] = []
+    for index, (span_start, span_end) in enumerate(relative):
+        chains.append(
+            f"[0:v]{_trim_segment('trim', span_start, span_end)},setpts=PTS-STARTPTS[cv{index}]"
+        )
+        if has_audio:
+            chains.append(
+                f"[0:a]{_trim_segment('atrim', span_start, span_end)},asetpts=PTS-STARTPTS[ca{index}]"
+            )
+
+    count = len(relative)
+    chains.append(
+        "".join(f"[cv{index}]" for index in range(count)) + f"concat=n={count}:v=1:a=0[vcut]"
+    )
+    if has_audio:
+        chains.append(
+            "".join(f"[ca{index}]" for index in range(count)) + f"concat=n={count}:v=0:a=1[acut]"
+        )
+    return ";".join(chains), "vcut", "acut"
+
+
 def build_audio_filter_graph(
     video_info: dict[str, Any],
     duration: float,
     audio_config: dict[str, Any] | None = None,
     bgm_input_index: int | None = None,
+    source_a: str = "0:a",
 ) -> tuple[str, bool]:
     """Build the audio filter graph for mixing, ducking, and fading.
+
+    ``source_a`` is the label holding the (already cut/concatenated) gameplay
+    audio, so cuts stay in sync with the video.
 
     Returns:
         (filter_str, has_audio_stream)
@@ -297,7 +363,7 @@ def build_audio_filter_graph(
     if has_video_audio and has_bgm:
         if auto_ducking:
             parts.append(
-                f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+                f"[{source_a}]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
                 f"volume={gameplay_vol:.4f},asplit=2[agp_mix][agp_sc]"
             )
             parts.append(
@@ -314,7 +380,7 @@ def build_audio_filter_graph(
             )
         else:
             parts.append(
-                f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+                f"[{source_a}]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
                 f"volume={gameplay_vol:.4f}[agp_raw]"
             )
             parts.append(
@@ -327,7 +393,7 @@ def build_audio_filter_graph(
             )
     elif has_video_audio:
         parts.append(
-            f"[0:a]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
+            f"[{source_a}]aformat=channel_layouts=stereo,aresample=48000:async=1:first_pts=0,"
             f"volume={gameplay_vol:.4f}{fade_suffix}[outa]"
         )
     elif has_bgm:
@@ -348,6 +414,7 @@ def build_ffmpeg_command(
     config_path: Path,
     encoder: str = "auto",
     audio_config: dict[str, Any] | None = None,
+    cuts: Sequence[Cut] | None = None,
 ) -> tuple[list[str], float]:
     video_path = Path(video_path).expanduser().resolve()
     output_path = Path(output_path).expanduser().resolve()
@@ -358,8 +425,15 @@ def build_ffmpeg_command(
     info = probe_video(video_path)
     if info["duration"] and end > info["duration"] + 0.05:
         raise ValueError(f"Clip OUT ({end:.2f}s) exceeds video duration ({info['duration']:.2f}s)")
-    duration = end - start
-    graph, image_inputs = build_filter_complex(config, config_path, info)
+    spans = kept_spans(start, end, cuts)
+    if not spans:
+        raise ValueError("Every part of the clip is cut away — keep at least one segment")
+    # The shortened result, not the raw trim, is what plays and what gets encoded.
+    duration = sum(span_end - span_start for span_start, span_end in spans)
+    cut_graph, video_label, audio_label = build_cut_filter(
+        start, end, cuts, bool(info.get("has_audio"))
+    )
+    graph, image_inputs = build_filter_complex(config, config_path, info, source_v=video_label)
     fps = int(config.get("canvas", {}).get("fps", 60))
 
     effective_audio_cfg = dict(config.get("audio", {}))
@@ -375,7 +449,7 @@ def build_ffmpeg_command(
 
     bgm_input_index = (1 + len(image_inputs)) if bgm_path is not None else None
     audio_graph, has_audio = build_audio_filter_graph(
-        info, duration, effective_audio_cfg, bgm_input_index
+        info, duration, effective_audio_cfg, bgm_input_index, source_a=audio_label
     )
 
     command = [find_ffmpeg(), "-hide_banner", "-y", "-loglevel", "error", "-ss", f"{start:.6f}", "-i", str(video_path)]
@@ -390,7 +464,8 @@ def build_ffmpeg_command(
             command += ["-to", f"{bgm_end:.6f}"]
         command += ["-stream_loop", "-1", "-i", str(bgm_path)]
 
-    combined_filter = f"{graph};{audio_graph}" if audio_graph else graph
+    # Cut prelude first: it produces [vcut]/[acut], which the layout graph consumes.
+    combined_filter = ";".join(part for part in (cut_graph, graph, audio_graph) if part)
     command += [
         "-filter_complex_threads", "4",
         "-filter_complex", combined_filter,
@@ -440,11 +515,12 @@ def run_render(
     encoder: str = "auto",
     progress: ProgressCallback | None = None,
     audio_config: dict[str, Any] | None = None,
+    cuts: Sequence[Cut] | None = None,
 ) -> Path:
     output_path = Path(output_path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     command, duration = build_ffmpeg_command(
-        video_path, output_path, start, end, config, config_path, encoder, audio_config
+        video_path, output_path, start, end, config, config_path, encoder, audio_config, cuts
     )
     active_encoder = encoder if encoder != "auto" else str(config.get("canvas", {}).get("encoder", "auto"))
     if active_encoder not in ("auto", "nvenc") and "h264_nvenc" in command:
@@ -478,7 +554,7 @@ def run_render(
             if progress:
                 progress(0.0, "NVENC unavailable; retrying with CPU encoding…")
             cpu_command, _ = build_ffmpeg_command(
-                video_path, output_path, start, end, config, config_path, "cpu", audio_config
+                video_path, output_path, start, end, config, config_path, "cpu", audio_config, cuts
             )
             code, error = launch(cpu_command)
         if code != 0:
