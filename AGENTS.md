@@ -108,6 +108,7 @@ ClipCraft/
 │   ├── test_gui_smoke.py              # Smoke tests for Qt widgets, instantiation, dialogs, split timeline
 │   ├── test_segments.py               # Cut math: normalization, kept spans, timeline mapping, cut-aware stepping
 │   ├── test_render_cuts.py            # Trim/concat graph assembly + frame-exact end-to-end cut render
+│   ├── test_fades.py                  # Per-layer fade chain + end-to-end alpha/colour fade renders
 │   ├── test_state.py                  # Atomic state persistence, corruption handling, path resolution
 │   ├── test_templates.py              # Template schema validation & config cloning
 │   └── test_tokens.py                 # Dynamic filename token substitution & formatting
@@ -212,6 +213,9 @@ Templates configure the full vertical layout and encoding parameters:
 | `z` | `int` | Integer Z-order. Layers are composited in strictly ascending order. |
 | `visible` | `bool` | Visibility toggle. Hidden layers are skipped during rendering and preview. |
 | `opacity` | `float` | Alpha multiplier from `0.0` (invisible) to `1.0` (fully opaque). |
+| `fade_enabled` | `bool` | Enables the fade-in/out ramp for this layer. Absent means no fade. |
+| `fade_in` | `float` | Seconds to ramp the layer in from transparent (default `0.5`). |
+| `fade_out` | `float` | Seconds to ramp the layer out to transparent at the clip end (default `0.5`). |
 | `asset` | `string` | (`image` only) File path relative to template location or absolute. |
 | `text` | `string` | (`text` only) String content to render. |
 | `font` | `string` | (`text` only) Font family name (Impact, Arial, Segoe UI, etc.). |
@@ -342,6 +346,20 @@ Before any layout work, the source is reduced to the kept spans (IN/OUT minus th
 - `build_cut_filter()` returns `("", "0:v", "0:a")` when the cut list has no effect inside `[start, end]`, so an uncut render produces a byte-identical graph.
 - The total `-t` duration is the sum of the kept spans, not `end - start`.
 
+#### Per-Layer Fades (`build_layer_fade_filter`)
+Each layer can ramp in/out independently (`fade_enabled`, `fade_in`, `fade_out`; default 0.5s each):
+
+```
+[lay_main]...,format=rgba,colorchannelmixer=aa=1.0000,fade=t=in:st=0:d=0.5000:alpha=1,
+fade=t=out:st=2.5000:d=0.5000:alpha=1
+```
+
+- Overlaid layers use **alpha fades** (`alpha=1`), which reveal whatever is underneath. This requires an alpha-capable pix_fmt, hence `format=rgba` before the fade chain.
+- Fade-out is anchored to the **edited** duration, so it always lands on the last exported frame: `st = duration - fade_out`, where `duration` is the kept length after cuts. Durations are clamped to the clip so a 0.5s fade cannot exceed a 0.4s clip.
+- The **background** is the bottom of the stack, so an alpha fade there would be discarded by `format=yuv420p` (alpha is dropped, RGB stays). It therefore uses a **colour fade** (`alpha=False`) that ramps to/from black instead.
+- Layers without `fade_enabled` get no extra filters at all, keeping their graph byte-identical.
+- **Preview parity**: `main_window._layer_fade_factor()` computes the same ramp from source time (`source_to_timeline`) and multiplies each canvas item's opacity, so the ramp previews exactly and stays in sync during playback and across cut regions.
+
 #### Filter Graph Synthesis (`build_filter_complex`)
 1. Slices the incoming video stream (the cut output `[vcut]`, or `[0:v]` when uncut) into $N+1$ outputs using `split`:
    ```
@@ -451,7 +469,7 @@ To maintain smooth 60fps playback with full sound synchronization:
 
 ### 7.7 Layer Stack & Property Inspector
 - **`LayerStackWidget`**: Reorders layers via drag-and-drop or Forward/Backward buttons. Toggles visibility with vector eye icons. Displays type badges: `[VID]`, `[TXT]`, `[IMG]`.
-- **`LayerInspectorWidget`**: Dynamic property inspector. Automatically toggles between Typography controls (for text layers), Asset Pickers (for image layers), and Crop Spinboxes (for video layers).
+- **`LayerInspectorWidget`**: Dynamic property inspector. Automatically toggles between Typography controls (for text layers), Asset Pickers (for image layers), and Crop Spinboxes (for video layers). The **Fade in / out** group holds the per-layer checkbox plus in/out durations (default 0.5s) and an **Apply to all** button that copies those settings to every layer.
 
 ### 7.8 Split & Cut Studio (`split_dialog.py`)
 - Opened from the **Split & Cut…** button under the transport panel. It is the only way to remove footage from the *middle* of a clip; IN/OUT alone can only describe one contiguous range.
@@ -484,7 +502,8 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `find_ffmpeg() -> str`: Locates `ffmpeg` on system `PATH`.
 - `probe_video(path: str | Path, ffprobe: str | None) -> dict[str, Any]`: Extracts stream metrics via `ffprobe`.
 - `build_cut_filter(start, end, cuts, has_audio) -> tuple[str, str, str]`: Trim/concat prelude; returns `(chains, video_label, audio_label)`.
-- `build_filter_complex(config, config_path, video_info, source_v="0:v") -> tuple[str, list[Path]]`: Compiles FFmpeg filter string.
+- `build_layer_fade_filter(layer, duration, *, alpha=True) -> str`: Per-layer fade chain (`alpha=False` for the background, which fades to black instead of revealing).
+- `build_filter_complex(config, config_path, video_info, source_v="0:v", duration=None) -> tuple[str, list[Path]]`: Compiles FFmpeg filter string.
 - `build_audio_filter_graph(video_info, duration, audio_config, bgm_input_index, source_a="0:a") -> tuple[str, bool]`: Mixes/ducks/fades audio from an arbitrary source label.
 - `build_ffmpeg_command(..., audio_config=None, cuts=None) -> tuple[list[str], float]`: Assembles the CLI command; the returned duration is the kept length.
 - `run_render(..., audio_config=None, cuts=None) -> Path`: Executes subprocess, streams progress, falls back to CPU on NVENC failure.
@@ -568,6 +587,7 @@ Run the entire automated test suite:
 - `tests/test_gui_smoke.py`: Headless Qt tests verifying widget instantiation, transport states, layer selection, dialogs, split timeline model and painting.
 - `tests/test_segments.py`: Cut normalization, kept spans, timeline mapping and cut-aware stepping (including exact-boundary steps).
 - `tests/test_render_cuts.py`: Trim/concat graph structure plus a frame-exact end-to-end render that decodes grey-coded frames to prove the removed ones are gone.
+- `tests/test_fades.py`: Fade-chain unit tests (defaults, clamping, background colour fade) plus renders that measure the darkened first/last frames and the alpha ramp of an overlaid image.
 - `tests/test_state.py`: Verifies state resolution (portable vs OS directory), atomic file write/swap, and corrupted JSON resilience.
 - `tests/test_templates.py`: Enforces schema validity, layer types, and rect geometry across all files in `templates/`.
 - `tests/test_tokens.py`: Tests `format_token_time` and token substitution patterns.
@@ -585,6 +605,7 @@ Run the entire automated test suite:
 6. **Launcher & Virtualenv Resilience**: Batch launchers (`run_gui.bat`, `run_batch.bat`, `render.bat`, `install.bat`) must directly invoke `%~dp0.venv\Scripts\python.exe` to avoid executing system Python (e.g. Python 3.13) which may lack dependencies. Launchers must keep the window open (`pause`) on non-zero exit codes. Unhandled crashes and GUI startup errors must be written to `clipcraft.log` via `_setup_crash_logging()` in `clipcraft.py`.
 7. **Cuts Are Pairs of Trims**: A cut region must be removed from **both** video and audio in the same filter graph (`trim`/`setpts` and `atrim`/`asetpts`), and the exported duration must be `timeline_duration()`, never `out - in`. Any new feature that seeks the source (playback, scrubbing, stepping, thumbnails) must go through `clipcraft.segments` so removed regions are skipped consistently.
 8. **No Hidden Removed Footage**: `_play_tick`, `_reverse_tick`, `step_frames` and the scrubber must never rest inside a cut. If you add a new seek path, route it through `next_kept_time`/`previous_kept_time`/`step_time`.
+9. **Fades Are Alpha Ramps**: Per-layer fades must stay on the *edited* timeline (fade-out ends on the last exported frame, cuts do not stretch them). Overlaid layers fade their alpha over whatever is underneath; the background fades colour to black because its alpha is discarded by `format=yuv420p`. The preview applies the identical ramp through `_layer_fade_factor()` — do not bake opacity into `layer_preview_image()`, or fades will double-apply.
 
 ---
 

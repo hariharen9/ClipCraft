@@ -167,6 +167,78 @@ class TestGuiSmoke(unittest.TestCase):
         self.assertEqual(kept.name().lower(), "#2f4a66")
         self.assertNotEqual(cut.name().lower(), "#2f4a66")
 
+    def test_inspector_fade_controls_roundtrip(self):
+        inspector = LayerInspectorWidget()
+        self.assertAlmostEqual(inspector.fade_in_spin.value(), 0.5)
+        self.assertAlmostEqual(inspector.fade_out_spin.value(), 0.5)
+        self.assertFalse(inspector.fade_in_spin.isEnabled())
+
+        inspector.set_fade_controls(True, 1.25, 0.75)
+        self.assertEqual(inspector.fade_settings(), (True, 1.25, 0.75))
+        self.assertTrue(inspector.fade_in_spin.isEnabled())
+        self.assertTrue(inspector.fade_out_spin.isEnabled())
+
+        inspector.set_fade_controls(False, 0.5, 0.5)
+        self.assertEqual(inspector.fade_settings(), (False, 0.5, 0.5))
+        self.assertFalse(inspector.fade_in_spin.isEnabled())
+
+    def test_main_window_layer_fade_factor(self):
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            win.video_info = {"duration": 10.0, "fps": 30.0}
+            win._cut_regions = [(3.0, 5.0)]  # edited length becomes 8s
+            win.in_spin.blockSignals(True)
+            win.out_spin.blockSignals(True)
+            win.in_spin.setValue(0.0)
+            win.out_spin.setValue(10.0)
+            win.in_spin.blockSignals(False)
+            win.out_spin.blockSignals(False)
+
+            layer = {"fade_enabled": True, "fade_in": 1.0, "fade_out": 1.0}
+            cases = {
+                0.0: 0.0,    # first frame: fully transparent
+                0.5: 0.5,    # halfway through the fade-in
+                2.0: 1.0,    # fully visible
+                3.5: 1.0,    # inside a removed region, maps to the kept timeline
+                9.5: 0.5,    # halfway through the fade-out
+                10.0: 0.0,   # last frame: fully transparent
+            }
+            for playhead, expected in cases.items():
+                win.playhead = playhead
+                with self.subTest(playhead=playhead):
+                    self.assertAlmostEqual(win._layer_fade_factor(layer), expected, places=6)
+
+            self.assertEqual(win._layer_fade_factor({"fade_enabled": False}), 1.0)
+
+            # Outside the trimmed range the editor view stays neutral.
+            win.playhead = 10.0
+            win.in_spin.blockSignals(True)
+            win.in_spin.setValue(2.0)
+            win.in_spin.blockSignals(False)
+            win.playhead = 1.0
+            self.assertEqual(win._layer_fade_factor(layer), 1.0)
+        finally:
+            win.close()
+
+    def test_apply_fade_to_all_layers(self):
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            win.inspector.set_fade_controls(True, 0.8, 0.4)
+            win._apply_fade_to_all()
+            layers = win.config["layers"]
+            self.assertGreaterEqual(len(layers), 2)
+            for name, layer in layers.items():
+                with self.subTest(layer=name):
+                    self.assertTrue(layer["fade_enabled"])
+                    self.assertAlmostEqual(layer["fade_in"], 0.8)
+                    self.assertAlmostEqual(layer["fade_out"], 0.4)
+
+            win.inspector.set_fade_controls(False, 0.0, 0.0)
+            win._apply_fade_to_all()
+            self.assertFalse(any(layer.get("fade_enabled") for layer in layers.values()))
+        finally:
+            win.close()
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)

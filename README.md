@@ -48,6 +48,7 @@ run_gui.bat
 * **Multi-Game Templates**: Seamlessly switch layouts between **Valorant**, **Rainbow Six Siege**, **Counter-Strike 2**, **Apex Legends**, **Call of Duty / Warzone**, **Fortnite**, **League of Legends**, **General Facecam**, and **Clean Gameplay**, or customize and save your own.
 * **Smart Audio & BGM Engine**: Drag & drop any `.mp3` or `.wav` track. Automatically ducks background music when voice callouts or gunshots peak, plus smooth 0.5s fades at clip start and end.
 * **Split & Cut Anywhere**: One IN/OUT pair is not always enough. Open the **Split & Cut** studio to split a recording at any point, delete dead time, queue wipes, or silent stretches from the middle, and keep the rest — playback and export skip straight over the removed parts.
+* **Per-Layer Fades**: Give any layer — gameplay feed, killfeed crop, logo, text — its own fade in and fade out (0.5s by default). Tick the box in the layer editor, dial the seconds, or hit **Apply to all** to fade the whole composition in one click.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 

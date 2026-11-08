@@ -95,6 +95,7 @@ from .constants import (
     AUDIO_DEFAULTS,
     BG_DEFAULTS,
     BG_PRESETS,
+    FADE_DEFAULT_SECONDS,
     HANDLE_SIZE,
     MIN_LAYER_SIZE,
     RENDER_PRESETS,
@@ -666,6 +667,8 @@ class ClipCraftWindow(QMainWindow):
         self.inspector.opacity_pressed.connect(self._opacity_slider_pressed)
         self.inspector.opacity_released.connect(self._opacity_slider_released)
         self.inspector.opacity_changed.connect(self._opacity_slider_changed)
+        self.inspector.fade_changed.connect(self._on_fade_changed)
+        self.inspector.fade_apply_all_clicked.connect(self._apply_fade_to_all)
         self.inspector.text_content_edited.connect(self._on_text_content_edited)
         self.inspector.text_prop_changed.connect(self._on_text_prop_changed)
         self.inspector.text_color_clicked.connect(self._choose_text_color)
@@ -1227,6 +1230,7 @@ class ClipCraftWindow(QMainWindow):
         self.position_slider.setValue(self._source_to_slider(self.playhead))
         self.position_slider.blockSignals(False)
         self._update_time_label()
+        self._apply_layer_fades()
 
     def _start_playback(self, direction: int = 1, reset_speed: bool = False) -> None:
         if self.capture is None or not self.video_info:
@@ -1562,6 +1566,11 @@ class ClipCraftWindow(QMainWindow):
         self.opacity_slider.setValue(int(round(opacity * 100)))
         self.opacity_slider.blockSignals(False)
         self.opacity_label.setText(f"{int(round(opacity * 100))}%")
+        self.inspector.set_fade_controls(
+            bool(layer.get("fade_enabled", False)),
+            float(layer.get("fade_in", FADE_DEFAULT_SECONDS)),
+            float(layer.get("fade_out", FADE_DEFAULT_SECONDS)),
+        )
         is_image = layer.get("kind") == "image"
         self.asset_group.setVisible(is_image)
         self.asset_edit.setText(str(layer.get("asset", "")) if is_image else "")
@@ -1678,6 +1687,72 @@ class ClipCraftWindow(QMainWindow):
         if item is not None:
             item.setOpacity(opacity)
         self._undo_commit_timer.start(800)
+
+    def _on_fade_changed(self) -> None:
+        name = self._active_layer_name()
+        layer = self.config["layers"].get(name)
+        if not layer:
+            return
+        if self._pending_undo is None:
+            self._pending_undo = (f"Fade {name.replace('_', ' ')}", clone_config(self.config))
+        enabled, fade_in, fade_out = self.inspector.fade_settings()
+        layer["fade_enabled"] = enabled
+        layer["fade_in"] = fade_in
+        layer["fade_out"] = fade_out
+        self._apply_layer_fades()
+        self._undo_commit_timer.start(800)
+
+    def _apply_fade_to_all(self) -> None:
+        enabled, fade_in, fade_out = self.inspector.fade_settings()
+        self._snapshot("Fade in/out on all layers")
+        layers = self.config.get("layers", {})
+        for layer in layers.values():
+            layer["fade_enabled"] = enabled
+            layer["fade_in"] = fade_in
+            layer["fade_out"] = fade_out
+        self._apply_layer_fades()
+        self.statusBar().showMessage(
+            f"Fade {'enabled' if enabled else 'disabled'} "
+            f"({fade_in:.2f}s in / {fade_out:.2f}s out) across {len(layers)} layers"
+        )
+
+    # -- layer fades -------------------------------------------------------
+
+    def _layer_fade_factor(self, layer: dict[str, Any]) -> float:
+        """Alpha multiplier for a layer at the current playhead (1.0 = no fade).
+
+        The ramp runs on the *edited* timeline, so cut regions do not stretch a
+        fade and the fade-out always lands on the last exported frame.
+        """
+        if not layer.get("fade_enabled", False) or not self.video_info:
+            return 1.0
+        start, end = self.in_spin.value(), self.out_spin.value()
+        # Outside the exported range there is no fade result to show; keep the
+        # editor view neutral instead of hiding the layer entirely.
+        if self.playhead < start - 1e-9 or self.playhead > end + 1e-9:
+            return 1.0
+        duration = timeline_duration(start, end, self._cut_regions)
+        if duration <= 1e-6:
+            return 1.0
+        elapsed = source_to_timeline(self.playhead, start, end, self._cut_regions)
+        fade_in = max(0.0, float(layer.get("fade_in", FADE_DEFAULT_SECONDS)))
+        fade_out = max(0.0, float(layer.get("fade_out", FADE_DEFAULT_SECONDS)))
+        factor = 1.0
+        if fade_in > 1e-6:
+            factor = min(factor, elapsed / fade_in)
+        if fade_out > 1e-6:
+            factor = min(factor, (duration - elapsed) / fade_out)
+        return max(0.0, min(1.0, factor))
+
+    def _apply_layer_fades(self) -> None:
+        """Push fade state onto canvas items. Cheap enough to run on every tick."""
+        for name, item in self.layer_items.items():
+            layer = self.config.get("layers", {}).get(name, {})
+            base = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            item.setOpacity(base * self._layer_fade_factor(layer))
+        if self._bg_item is not None:
+            background_layer = self.config.get("layers", {}).get("background", {})
+            self._bg_item.setOpacity(self._layer_fade_factor(background_layer))
 
     def toggle_layer_visible(self, state: int):
         name = self._active_layer_name()
@@ -2108,6 +2183,7 @@ class ClipCraftWindow(QMainWindow):
             self.layer_stack.populate(self.config.get('layers', {}), self._active_layer_name())
         self.select_layer()
         self._sync_background_controls()
+        self._apply_layer_fades()
         self.preview_view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def browse_output(self):
@@ -2257,6 +2333,8 @@ class ClipCraftWindow(QMainWindow):
 
     def _on_in_out_changed(self, _val: float) -> None:
         self._update_output_path()
+        # Fade-out is anchored to the clip length, so trim edits move it.
+        self._apply_layer_fades()
 
     def _compute_output_filename(self, pattern: str | None = None) -> str:
         if not pattern:

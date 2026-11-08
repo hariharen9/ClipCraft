@@ -103,11 +103,51 @@ def _crop_expr(crop: list[float]) -> str:
     )
 
 
+def build_layer_fade_filter(
+    layer: dict[str, Any],
+    duration: float | None,
+    *,
+    alpha: bool = True,
+) -> str:
+    """Fade-in/out ramp for one layer, as a leading-comma filter chain.
+
+    Returns ``""`` when the layer does not fade, so enabled fades never touch the
+    graph of layers that do not use them.
+
+    ``alpha=True`` multiplies the alpha channel (``fade=...:alpha=1``) and
+    requires an alpha-capable format, which is how overlaid layers reveal what
+    is underneath. The background sits at the bottom of the stack, so an alpha
+    fade there would simply be discarded by the final ``format=yuv420p``; it is
+    rendered with ``alpha=False`` (a colour fade to/from black) instead.
+
+    ``duration`` is the *edited* clip length (kept spans after cuts): fade-out
+    starts at ``duration - fade_out`` on the output timeline.
+    """
+    if not layer.get("fade_enabled", False):
+        return ""
+
+    fade_in = max(0.0, float(layer.get("fade_in", 0.5)))
+    fade_out = max(0.0, float(layer.get("fade_out", 0.5)))
+    if duration is not None and duration > 0:
+        fade_in = min(fade_in, duration)
+        fade_out = min(fade_out, duration)
+
+    alpha_flag = ":alpha=1" if alpha else ""
+    filters: list[str] = []
+    if fade_in > 0.001:
+        filters.append(f"fade=t=in:st=0:d={fade_in:.4f}{alpha_flag}")
+    if fade_out > 0.001 and duration is not None and duration > 0:
+        start = max(0.0, duration - fade_out)
+        filters.append(f"fade=t=out:st={start:.4f}:d={fade_out:.4f}{alpha_flag}")
+    return ("," + ",".join(filters)) if filters else ""
+
+
 def build_filter_complex(
     config: dict[str, Any],
     config_path: Path,
     video_info: dict[str, Any],
     source_v: str = "0:v",
+    duration: float | None = None,
 ) -> tuple[str, list[Path]]:
     canvas = config.get("canvas", {})
     out_w, out_h = int(canvas.get("width", 1080)), int(canvas.get("height", 1920))
@@ -138,11 +178,12 @@ def build_filter_complex(
     bg_blur = max(1, int(background.get("blur", 22)))
     bg_brightness = float(background.get("brightness", -0.08))
     bg_saturation = float(background.get("saturation", 0.82))
+    bg_fade = build_layer_fade_filter(layers.get("background", {}), duration, alpha=False)
     parts.append(
         f"[vsrc0]scale={max(2, out_w // 2)}:{max(2, out_h // 2)}:force_original_aspect_ratio=increase,"
         f"crop={max(2, out_w // 2)}:{max(2, out_h // 2)},boxblur={bg_blur}:2,"
         f"eq=brightness={bg_brightness:.4f}:saturation={bg_saturation:.4f},"
-        f"scale={out_w}:{out_h}[base0]"
+        f"scale={out_w}:{out_h}{bg_fade}[base0]"
     )
 
     current = "base0"
@@ -168,7 +209,10 @@ def build_filter_complex(
                 )
             else:
                 filter_body = f"{crop_filter},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
-            if opacity < 0.9999:
+            fade = build_layer_fade_filter(layer, duration)
+            if fade:
+                filter_body += f",format=rgba,colorchannelmixer=aa={opacity:.4f}{fade}"
+            elif opacity < 0.9999:
                 filter_body += f",format=rgba,colorchannelmixer=aa={opacity:.4f}"
             label = f"lay_{name}"
             parts.append(f"[{vsrc_label}]{filter_body}[{label}]")
@@ -194,9 +238,10 @@ def build_filter_complex(
             else:
                 draw_w, draw_h, draw_x, draw_y = w, h, x, y
             image_label = f"img_{name}"
+            image_fade = build_layer_fade_filter(layer, duration)
             parts.append(
                 f"[{input_index}:v]format=rgba,{trim}scale={draw_w}:{draw_h},"
-                f"colorchannelmixer=aa={opacity:.4f}[{image_label}]"
+                f"colorchannelmixer=aa={opacity:.4f}{image_fade}[{image_label}]"
             )
             next_label = f"comp{step_idx}"
             parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
@@ -227,9 +272,10 @@ def build_filter_complex(
             PILImage.fromarray(img_arr).save(temp_path)
             overlay_inputs.append(temp_path)
             text_label = f"txt_{name}"
+            text_fade = build_layer_fade_filter(layer, duration)
             parts.append(
                 f"[{input_index}:v]format=rgba,scale={w}:{h},"
-                f"colorchannelmixer=aa={opacity:.4f}[{text_label}]"
+                f"colorchannelmixer=aa={opacity:.4f}{text_fade}[{text_label}]"
             )
             next_label = f"comp{step_idx}"
             parts.append(f"[{current}][{text_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
@@ -433,7 +479,9 @@ def build_ffmpeg_command(
     cut_graph, video_label, audio_label = build_cut_filter(
         start, end, cuts, bool(info.get("has_audio"))
     )
-    graph, image_inputs = build_filter_complex(config, config_path, info, source_v=video_label)
+    graph, image_inputs = build_filter_complex(
+        config, config_path, info, source_v=video_label, duration=duration
+    )
     fps = int(config.get("canvas", {}).get("fps", 60))
 
     effective_audio_cfg = dict(config.get("audio", {}))

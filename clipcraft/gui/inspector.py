@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 import qtawesome as qta
 
+from .constants import FADE_DEFAULT_SECONDS
 from .layer_stack import LayerStackWidget
 
 
@@ -35,6 +36,9 @@ class LayerInspectorWidget(QWidget):
     opacity_changed = Signal(int)
     opacity_pressed = Signal()
     opacity_released = Signal()
+
+    fade_changed = Signal()
+    fade_apply_all_clicked = Signal()
 
     text_content_edited = Signal(str)
     text_prop_changed = Signal()
@@ -95,6 +99,47 @@ class LayerInspectorWidget(QWidget):
         self.opacity_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         vis_opacity_row.addWidget(self.opacity_label)
         layer_layout.addLayout(vis_opacity_row)
+
+        # ── Fade In / Out (#18) ────────────────────────────────────
+        fade_group = QGroupBox("Fade in / out")
+        fade_layout = QVBoxLayout(fade_group)
+        fade_layout.setContentsMargins(6, 4, 6, 6)
+        fade_layout.setSpacing(5)
+
+        fade_header = QHBoxLayout()
+        self.fade_check = QCheckBox("Fade in / out")
+        self.fade_check.setToolTip(
+            "Ramp this layer's opacity up at the clip start and down at the end"
+        )
+        self.fade_check.toggled.connect(self._on_fade_toggled)
+        fade_header.addWidget(self.fade_check)
+        fade_header.addStretch(1)
+
+        self.fade_all_button = QPushButton(" Apply to all")
+        self.fade_all_button.setIcon(qta.icon("fa5s.layer-group", color="#dcdcdc"))
+        self.fade_all_button.setToolTip("Copy these fade settings to every layer")
+        self.fade_all_button.clicked.connect(self.fade_apply_all_clicked.emit)
+        fade_header.addWidget(self.fade_all_button)
+        fade_layout.addLayout(fade_header)
+
+        fade_form = QFormLayout()
+        self.fade_in_spin = QDoubleSpinBox()
+        self.fade_out_spin = QDoubleSpinBox()
+        for spin, tip in (
+            (self.fade_in_spin, "Seconds to fade this layer in from transparent"),
+            (self.fade_out_spin, "Seconds to fade this layer out to transparent"),
+        ):
+            spin.setRange(0.0, 30.0)
+            spin.setDecimals(2)
+            spin.setSingleStep(0.1)
+            spin.setValue(FADE_DEFAULT_SECONDS)
+            spin.setSuffix(" s")
+            spin.setToolTip(tip)
+            spin.setEnabled(False)
+            spin.valueChanged.connect(self._on_fade_duration_changed)
+            fade_form.addRow("Fade in" if spin is self.fade_in_spin else "Fade out", spin)
+        fade_layout.addLayout(fade_form)
+        layer_layout.addWidget(fade_group)
 
         # ── Text Properties (#17) ───────────────────────────────────
         self.text_group = QGroupBox("Text properties")
@@ -265,6 +310,36 @@ class LayerInspectorWidget(QWidget):
 
     def active_layer_name(self) -> str:
         return self.layer_stack.current_layer_name()
+
+    # -- fade controls -----------------------------------------------------
+
+    def _on_fade_toggled(self, enabled: bool) -> None:
+        self.fade_in_spin.setEnabled(enabled)
+        self.fade_out_spin.setEnabled(enabled)
+        self.fade_changed.emit()
+
+    def _on_fade_duration_changed(self, _value: float) -> None:
+        self.fade_changed.emit()
+
+    def fade_settings(self) -> tuple[bool, float, float]:
+        """Current (enabled, fade_in seconds, fade_out seconds) from the controls."""
+        return (
+            self.fade_check.isChecked(),
+            float(self.fade_in_spin.value()),
+            float(self.fade_out_spin.value()),
+        )
+
+    def set_fade_controls(self, enabled: bool, fade_in: float, fade_out: float) -> None:
+        """Load a layer's fade settings without re-emitting change signals."""
+        for widget in (self.fade_check, self.fade_in_spin, self.fade_out_spin):
+            widget.blockSignals(True)
+        self.fade_check.setChecked(bool(enabled))
+        self.fade_in_spin.setValue(max(0.0, float(fade_in)))
+        self.fade_out_spin.setValue(max(0.0, float(fade_out)))
+        for widget in (self.fade_check, self.fade_in_spin, self.fade_out_spin):
+            widget.blockSignals(False)
+        self.fade_in_spin.setEnabled(bool(enabled))
+        self.fade_out_spin.setEnabled(bool(enabled))
 
     def set_undo_redo_enabled(self, can_undo: bool, can_redo: bool) -> None:
         self.undo_button.setEnabled(can_undo)

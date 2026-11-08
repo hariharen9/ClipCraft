@@ -5,6 +5,9 @@ from typing import Any
 HANDLE_SIZE = 6.0
 MIN_LAYER_SIZE = 10.0
 
+# Default per-layer fade duration applied when the checkbox is switched on.
+FADE_DEFAULT_SECONDS = 0.5
+
 BG_DEFAULTS: dict[str, float] = {
     "blur": 22.0,
     "brightness": -0.08,
