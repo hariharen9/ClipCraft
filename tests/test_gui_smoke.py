@@ -239,6 +239,39 @@ class TestGuiSmoke(unittest.TestCase):
         finally:
             win.close()
 
+    def test_sidebar_widths_prevent_clipped_labels(self):
+        """Regression: a 300px inspector clipped its 392px-wide property rows."""
+        from PySide6.QtWidgets import QScrollArea
+
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            self.assertGreaterEqual(win.inspector.minimumWidth(), 400)
+            # The inspector is hosted in a scroll area so short screens can scroll it.
+            self.assertIsInstance(win.inspector.parentWidget().parentWidget(), QScrollArea)
+
+            widths = sorted(scroll.minimumWidth() for scroll in win.findChildren(QScrollArea))
+            self.assertEqual(widths, [336, 416])
+
+            left_panel = min(win.findChildren(QScrollArea), key=lambda s: s.minimumWidth()).widget()
+            self.assertGreaterEqual(left_panel.minimumWidth(), 320)
+        finally:
+            win.close()
+
+    def test_f11_toggles_fullscreen(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        win = ClipCraftWindow(None, "valorant")
+        calls = []
+        try:
+            win.isActiveWindow = lambda: True
+            win._toggle_fullscreen = lambda: calls.append("toggle")
+            event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_F11, Qt.KeyboardModifier.NoModifier)
+            self.assertTrue(win.eventFilter(win.preview_view, event))
+            self.assertEqual(calls, ["toggle"])
+        finally:
+            win.close()
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)

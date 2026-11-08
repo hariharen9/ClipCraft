@@ -203,7 +203,8 @@ class ClipCraftWindow(QMainWindow):
         self.setWindowIcon(get_app_icon())
         self.setWindowTitle("ClipCraft Video Editor — Gaming Shorts")
         self.resize(1510, 940)
-        self.setMinimumSize(1100, 720)
+        # Left (320) + right (400) sidebars plus a workable canvas and header.
+        self.setMinimumSize(1280, 760)
         self.setAcceptDrops(True)
         state = load_state()
         self.config, self.config_path, self.game = self._resolve_template(game, config_path, state)
@@ -333,7 +334,12 @@ class ClipCraftWindow(QMainWindow):
         splitter.addWidget(left)
         splitter.addWidget(center)
         splitter.addWidget(right)
-        splitter.setSizes([330, 740, 360])
+        # Left/right keep their size; only the preview absorbs extra width, so a
+        # maximised window grows the canvas instead of the sidebars.
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
+        splitter.setSizes([340, 760, 416])
         self._rebuild_layer_combo()
         root.addWidget(splitter, 1)
         self.setCentralWidget(central)
@@ -342,10 +348,12 @@ class ClipCraftWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(280)
-        panel.setMaximumWidth(390)
+        # The controls inside need ~316px; anything narrower clips labels.
+        panel.setMinimumWidth(320)
+        panel.setMaximumWidth(440)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 4, 0)
+        layout.setSpacing(8)
 
         self.transport = TransportWidget()
         self.frame_label = self.transport.frame_label
@@ -586,6 +594,9 @@ class ClipCraftWindow(QMainWindow):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(panel)
+        # Pin the viewport too: without this the splitter shrinks the scroll area
+        # below the panel's width and the labels get clipped instead of scrolled.
+        scroll.setMinimumWidth(336)
         return scroll
 
     def _build_preview_panel(self) -> QWidget:
@@ -595,7 +606,11 @@ class ClipCraftWindow(QMainWindow):
         header = QHBoxLayout()
         header.addWidget(QLabel("Live composition preview"))
         header.addStretch(1)
-        header.addWidget(QLabel("Drag to move · drag the grips to resize · Shift = keep aspect"))
+        canvas_hint = QLabel("Drag to move · drag the grips to resize · Shift = keep aspect")
+        canvas_hint.setToolTip("Drag layers on the canvas to move them; Shift keeps the aspect ratio")
+        # Without this the long label demands >1000px and the splitter starves the sidebars.
+        canvas_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        header.addWidget(canvas_hint)
         self.grips_check = QCheckBox("Resize grips")
         self.grips_check.setChecked(self.show_grips)
         self.grips_check.setToolTip("Show or hide the resize grips (resizing is still available via the position/size fields)")
@@ -631,6 +646,9 @@ class ClipCraftWindow(QMainWindow):
 
     def _build_inspector_panel(self) -> QWidget:
         self.inspector = LayerInspectorWidget()
+        # The property rows need ~392px; a narrower sidebar silently clips labels.
+        self.inspector.setMinimumWidth(400)
+        self.inspector.setMaximumWidth(540)
 
         # Direct attribute references for seamless backwards compatibility
         self.layer_stack = self.inspector.layer_stack
@@ -686,7 +704,15 @@ class ClipCraftWindow(QMainWindow):
         self.inspector.save_layout_clicked.connect(self.save_layout)
         self.inspector.reset_layout_clicked.connect(self.reset_layout)
 
-        return self.inspector
+        # Scroll vertically so the sidebar stays usable on short screens (it needs
+        # ~980px of height, which is more than a 900px laptop viewport offers).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(self.inspector)
+        scroll.setMinimumWidth(416)
+        return scroll
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -2371,7 +2397,10 @@ class ClipCraftWindow(QMainWindow):
         pattern = self.pattern_combo.currentText().strip() or "{clip}_{game}_{in}-{out}"
         filename = self._compute_output_filename(pattern)
         out_dir = video_p.parent / "exports"
-        self.output_edit.setText(str(out_dir / filename))
+        target = str(out_dir / filename)
+        self.output_edit.setText(target)
+        # The pattern can produce long names; the field is narrow by design.
+        self.output_edit.setToolTip(target)
 
 
     # -- Editable Text Layers (#17) -----------------------------------------
@@ -2519,6 +2548,14 @@ class ClipCraftWindow(QMainWindow):
                     if key in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not shift:
                         return super().eventFilter(watched, event)
 
+                # --- Window ---
+                if key == Qt.Key.Key_F11:
+                    self._toggle_fullscreen()
+                    return True
+                if key == Qt.Key.Key_Escape and self.isFullScreen():
+                    self.showMaximized()
+                    return True
+
                 # --- Video editor hotkeys ---
                 if key == Qt.Key.Key_Space:
                     self.toggle_play()
@@ -2546,6 +2583,13 @@ class ClipCraftWindow(QMainWindow):
 
         return super().eventFilter(watched, event)
 
+    def _toggle_fullscreen(self) -> None:
+        """F11 toggles borderless fullscreen; Esc inside fullscreen restores maximised."""
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
+
     def closeEvent(self, event):
         qapp = QApplication.instance()
         if qapp:
@@ -2571,5 +2615,8 @@ def launch_gui(video_path: str | None, game: str, config_path: str | Path | None
     app.setWindowIcon(get_app_icon())
     window = ClipCraftWindow(video_path, game, config_path)
     window.setWindowIcon(get_app_icon())
-    window.show()
+    # Editors need every pixel: open filling the screen rather than at the small
+    # default size, which left the right-hand inspector clipped. F11 goes truly
+    # borderless fullscreen, Esc returns to this maximised layout.
+    window.showMaximized()
     return app.exec()

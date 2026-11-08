@@ -425,6 +425,7 @@ A 3-panel responsive layout:
 - **Left Panel**: Transport controls, **Split & Cut…** launcher, background look sliders, Sound & Music launcher card (`AudioStudioDialog`), export pattern settings, render presets, progress bar.
 - **Center Panel**: Canvas preview with `QGraphicsScene` and `QGraphicsView`, grips toggle, safe-zones toggle, sharp preview toggle.
 - **Right Panel**: Layer inspector with layer list, eye toggles, typography controls, geometry spinboxes, source crop controls, and undo/redo history.
+- **Window & splitters**: `launch_gui()` opens the window **maximised**; `F11` toggles borderless fullscreen and `Esc` returns to maximised. Left and right panes are wrapped in `QScrollArea`s with pinned minimum widths (336 / 416) and the splitter keeps their size (stretch factors `0,1,0`), so extra width always grows the canvas. The inspector's property rows naturally need ~392px; giving it 300px silently clips labels, which is why the minimums exist. The sidebar scrolls vertically because it needs ~980px of height on short laptop screens.
 
 ### 7.2 Playback Engine, Live Audio & Reverse Buffer
 To maintain smooth 60fps playback with full sound synchronization:
@@ -567,6 +568,8 @@ To maintain smooth 60fps playback with full sound synchronization:
 | **`Ctrl + Z`** | Main | Undo last canvas, layout, crop, or text change |
 | **`Ctrl + Shift + Z`** | Main | Redo last undone change |
 | **`Shift + Drag Grip`** | Canvas | Constrain layer aspect ratio while resizing |
+| **`F11`** | Main | Toggle borderless fullscreen |
+| **`Esc`** | Main (fullscreen) | Leave fullscreen, back to the maximised layout |
 | **`S`** | Split & Cut | Split the clip at the playhead |
 | **`Delete` / `Backspace`** | Split & Cut | Remove (or restore) the selected segment |
 | **`I` / `O`** | Split & Cut | Set IN / OUT at the playhead |
