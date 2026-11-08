@@ -51,3 +51,51 @@ def format_token_time(seconds: float) -> str:
 
 
 _format_token_time = format_token_time
+
+
+def set_app_user_model_id() -> None:
+    """Ensure Windows taskbar and titlebar group under ClipCraft instead of generic python."""
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("clipcraft.videoeditor.app")
+        except Exception:
+            pass
+
+
+def get_app_icon():
+    """Return the high-resolution application QIcon with robust path discovery and procedural fallback."""
+    from pathlib import Path
+    from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+    from clipcraft.config import APP_DIR, BUNDLE_DIR
+
+    candidates = [
+        APP_DIR / "clipcraft.ico",
+        BUNDLE_DIR / "clipcraft.ico",
+        Path(__file__).resolve().parent.parent.parent / "clipcraft.ico",
+        APP_DIR / "templates" / "assets" / "valo_logo.png",
+    ]
+    for p in candidates:
+        if p.is_file():
+            ico = QIcon(str(p))
+            if not ico.isNull():
+                return ico
+
+    # High-quality fallback icon
+    pix = QPixmap(64, 64)
+    pix.fill(QColor(0, 0, 0, 0))
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setBrush(QColor(18, 24, 38))
+    p.setPen(QColor(0, 229, 255))
+    p.drawRoundedRect(2, 2, 60, 60, 14, 14)
+    p.setPen(QColor(255, 255, 255))
+    f = p.font()
+    f.setBold(True)
+    f.setPointSize(22)
+    p.setFont(f)
+    p.drawText(pix.rect(), 0x0084, "CC")  # Qt.AlignmentFlag.AlignCenter
+    p.end()
+    return QIcon(pix)
+

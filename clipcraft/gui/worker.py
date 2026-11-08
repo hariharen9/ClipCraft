@@ -6,7 +6,24 @@ from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
-from ..renderer import run_render
+from ..renderer import run_render, probe_video
+
+
+class VideoProbeWorker(QThread):
+    finished_signal = Signal(dict, str)   # (info, video_path)
+    error_signal = Signal(str, str)      # (error_message, video_path)
+
+    def __init__(self, video_path: Path):
+        super().__init__()
+        self.video_path = Path(video_path)
+
+    def run(self):
+        try:
+            info = probe_video(self.video_path)
+            self.finished_signal.emit(info, str(self.video_path))
+        except Exception as exc:
+            self.error_signal.emit(str(exc), str(self.video_path))
+
 
 class RenderWorker(QThread):
     progress_signal = Signal(float, str)

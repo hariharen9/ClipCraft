@@ -164,6 +164,23 @@ class TestGuiSmoke(unittest.TestCase):
 
         dlg.close()
 
+    def test_app_icon_and_loading_overlay(self):
+        from clipcraft.gui.constants import get_app_icon
+        from clipcraft.gui.main_window import ImportLoadingOverlay
+
+        icon = get_app_icon()
+        self.assertFalse(icon.isNull())
+
+        overlay = ImportLoadingOverlay()
+        self.assertFalse(overlay.isVisible())
+        overlay.show_loading("test_clip.mp4", "Analyzing streams…")
+        self.assertTrue(overlay.isVisible())
+        self.assertIn("test_clip.mp4", overlay.filename_lbl.text())
+        overlay.set_status("Decoding initial frame…")
+        self.assertIn("initial frame", overlay.status_lbl.text())
+        overlay.hide_loading()
+        self.assertFalse(overlay.isVisible())
+
 
 if __name__ == "__main__":
     unittest.main()

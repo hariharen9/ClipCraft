@@ -36,6 +36,7 @@ from ..config import (
 )
 from ..assets import ensure_assets
 from ..preview import to_qimage_array, render_background, normalized_crop, fit_cover, fit_contain
+from .constants import get_app_icon, set_app_user_model_id
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
@@ -272,10 +273,7 @@ class BatchWindow(QMainWindow):
         self.setWindowTitle("ClipCraft — Batch Render Studio")
         self.setMinimumSize(1100, 700)
         self.resize(1340, 820)
-
-        icon_path = Path(__file__).resolve().parent.parent / "assets" / "clipcraft.ico"
-        if icon_path.is_file():
-            self.setWindowIcon(QIcon(str(icon_path)))
+        self.setWindowIcon(get_app_icon())
 
         self._ui_state = load_state()
 
@@ -1209,10 +1207,10 @@ class BatchWindow(QMainWindow):
 
 def launch_batch_gui(game: str | None = None, config_path: str | None = None) -> int:
     """Create or reuse a QApplication and open the batch render window."""
+    set_app_user_model_id()
     app = QApplication.instance() or QApplication(sys.argv)
-    icon_path = Path(__file__).resolve().parent.parent / "assets" / "clipcraft.ico"
-    if icon_path.is_file():
-        app.setWindowIcon(QIcon(str(icon_path)))
+    app.setWindowIcon(get_app_icon())
     window = BatchWindow(game, config_path)
+    window.setWindowIcon(get_app_icon())
     window.show()
     return app.exec()

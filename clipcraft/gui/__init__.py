@@ -9,6 +9,8 @@ from .constants import (
     SUPPORTED_VIDEO_EXTENSIONS,
     format_token_time,
     _format_token_time,
+    get_app_icon,
+    set_app_user_model_id,
 )
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCropDialog
@@ -25,7 +27,7 @@ from .batch_window import (
     BatchRenderWorker,
     launch_batch_gui,
 )
-from .worker import RenderWorker
+from .worker import RenderWorker, VideoProbeWorker
 
 __all__ = [
     "HANDLE_SIZE",
@@ -36,6 +38,8 @@ __all__ = [
     "SUPPORTED_VIDEO_EXTENSIONS",
     "format_token_time",
     "_format_token_time",
+    "get_app_icon",
+    "set_app_user_model_id",
     "HandleItem",
     "SafeZoneOverlayItem",
     "LayerItem",
@@ -49,6 +53,7 @@ __all__ = [
     "AudioStudioDialog",
     "CaptionStudioDialog",
     "RenderWorker",
+    "VideoProbeWorker",
     "ClipCraftWindow",
     "launch_gui",
     "BatchWindow",

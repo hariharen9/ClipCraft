@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 import qtawesome as qta
 
-from .constants import AUDIO_DEFAULTS, SUPPORTED_AUDIO_EXTENSIONS
+from .constants import AUDIO_DEFAULTS, SUPPORTED_AUDIO_EXTENSIONS, get_app_icon
 from ..renderer import probe_video
 
 
@@ -71,6 +71,7 @@ class AudioStudioDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("ClipCraft — Audio & Music Studio")
+        self.setWindowIcon(get_app_icon())
         self.setMinimumSize(620, 560)
         self.resize(680, 600)
         self.setAcceptDrops(True)

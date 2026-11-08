@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 import qtawesome as qta
 
+from .constants import get_app_icon
 from ..captions import (
     CaptionCue,
     CaptionWord,
@@ -135,6 +136,7 @@ class CaptionStudioDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("AI Auto-Captions Studio — Local Whisper")
+        self.setWindowIcon(get_app_icon())
         self.resize(760, 680)
         self.setMinimumSize(640, 560)
 

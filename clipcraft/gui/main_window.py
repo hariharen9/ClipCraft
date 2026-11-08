@@ -91,6 +91,8 @@ from .constants import (
     SUPPORTED_VIDEO_EXTENSIONS,
     format_token_time,
     _format_token_time,
+    get_app_icon,
+    set_app_user_model_id,
 )
 from .crop_dialog import VisualSourceCropDialog
 from .audio_dialog import AudioStudioDialog
@@ -98,11 +100,94 @@ from .caption_dialog import CaptionStudioDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
-from .worker import RenderWorker
+from .worker import RenderWorker, VideoProbeWorker
+
+class ImportLoadingOverlay(QWidget):
+    """Modern translucent loading badge displayed over the preview canvas while analyzing footage."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        card = QFrame()
+        card.setObjectName("import_card")
+        card.setStyleSheet("""
+            QFrame#import_card {
+                background-color: rgba(18, 24, 38, 0.95);
+                border: 2px solid #00e5ff;
+                border-radius: 12px;
+                padding: 20px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        header_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(qta.icon("fa5s.film", color="#00e5ff").pixmap(24, 24))
+        header_row.addWidget(icon_lbl)
+        title_lbl = QLabel("Importing Footage…")
+        title_lbl.setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 15px;")
+        header_row.addWidget(title_lbl)
+        card_layout.addLayout(header_row)
+
+        self.filename_lbl = QLabel("")
+        self.filename_lbl.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 13px;")
+        self.filename_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.filename_lbl.setWordWrap(True)
+        self.filename_lbl.setMaximumWidth(320)
+        card_layout.addWidget(self.filename_lbl)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFixedHeight(5)
+        self.progress_bar.setFixedWidth(280)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #1e293b;
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #00e5ff;
+                border-radius: 2px;
+            }
+        """)
+        card_layout.addWidget(self.progress_bar)
+
+        self.status_lbl = QLabel("Analyzing media streams with FFprobe…")
+        self.status_lbl.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        card_layout.addWidget(self.status_lbl)
+
+        layout.addWidget(card)
+        self.hide()
+
+    def show_loading(self, filename: str, status: str = "Analyzing media streams with FFprobe…"):
+        self.filename_lbl.setText(filename)
+        self.status_lbl.setText(status)
+        if self.parent():
+            self.resize(self.parent().size())
+        self.show()
+        self.raise_()
+
+    def set_status(self, status: str):
+        self.status_lbl.setText(status)
+
+    def hide_loading(self):
+        self.hide()
+
 
 class ClipCraftWindow(QMainWindow):
     def __init__(self, video_path: str | None, game: str | None = None, config_path: str | Path | None = None):
         super().__init__()
+        set_app_user_model_id()
+        self.setWindowIcon(get_app_icon())
         self.setWindowTitle("ClipCraft Video Editor — Gaming Shorts")
         self.resize(1510, 940)
         self.setMinimumSize(1100, 720)
@@ -113,6 +198,7 @@ class ClipCraftWindow(QMainWindow):
         self.original_config = clone_config(self.config)
         self.template_name = str(self.config.get("name") or self.game.replace("_", " ").title())
         self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
+        self.setWindowIcon(get_app_icon())
         remembered = str(state.get("source_dir", ""))
         self.source_dir = remembered if remembered and Path(remembered).is_dir() else str(Path.home())
         self.show_grips = bool(state.get("show_grips", True))
@@ -152,6 +238,7 @@ class ClipCraftWindow(QMainWindow):
         self.preview_sharp = bool(state.get("preview_sharp", True))
         self.preview_scale = 1.5 if self.preview_sharp else 1.0
         self.worker: RenderWorker | None = None
+        self._probe_worker: VideoProbeWorker | None = None
         self._undo_stack: list[tuple[str, dict[str, Any]]] = []
         self._redo_stack: list[tuple[str, dict[str, Any]]] = []
         self._pending_undo: tuple[str, dict[str, Any]] | None = None
@@ -168,7 +255,7 @@ class ClipCraftWindow(QMainWindow):
         if qapp:
             qapp.installEventFilter(self)
         if video_path:
-            self.load_video(video_path)
+            self.load_video(video_path, synchronous=True)
         else:
             QTimer.singleShot(100, self.browse_video)
 
@@ -501,6 +588,8 @@ class ClipCraftWindow(QMainWindow):
         self.preview_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_view.setBackgroundBrush(QBrush(QColor(16, 18, 24)))
         self.preview_view.setFrameShape(QFrame.Shape.StyledPanel)
+        self.preview_view.installEventFilter(self)
+        self._import_overlay = ImportLoadingOverlay(self.preview_view)
         layout.addWidget(self.preview_view, 1)
         hint = QLabel("Select a layer on the right to tweak its position, size, and source crop live.")
         hint.setWordWrap(True)
@@ -779,19 +868,54 @@ class ClipCraftWindow(QMainWindow):
         if filename:
             self.load_video(filename)
 
-    def load_video(self, filename: str):
+    def load_video(self, filename: str, synchronous: bool = False):
         path = Path(filename).expanduser().resolve()
         if not path.is_file():
             QMessageBox.warning(self, "Video not found", str(path))
             return
+
+        if self._playing:
+            self._stop_playback()
+
+        # Instant visual feedback so user immediately knows import is in progress
+        self.video_edit.setText(f"Importing: {path.name}…")
+        self.statusBar().showMessage(f"⏳ Importing {path.name}… Analyzing media streams with FFprobe")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        if hasattr(self, "_import_overlay"):
+            self._import_overlay.show_loading(path.name, "Analyzing video & audio streams with FFprobe…")
+        QApplication.processEvents()
+
+        if synchronous:
+            try:
+                info = probe_video(path)
+                self._on_video_probed(info, str(path))
+            except Exception as exc:
+                self._on_video_probe_failed(str(exc), str(path))
+            return
+
+        if hasattr(self, "_probe_worker") and self._probe_worker and self._probe_worker.isRunning():
+            self._probe_worker.terminate()
+            self._probe_worker.wait()
+
+        self._probe_worker = VideoProbeWorker(path)
+        self._probe_worker.finished_signal.connect(self._on_video_probed)
+        self._probe_worker.error_signal.connect(self._on_video_probe_failed)
+        self._probe_worker.start()
+
+    def _on_video_probed(self, info: dict[str, Any], video_path: str):
+        path = Path(video_path)
+        if hasattr(self, "_import_overlay"):
+            self._import_overlay.set_status("Opening video capture & decoding initial frame…")
+        QApplication.processEvents()
+
         try:
-            info = probe_video(path)
             capture = cv2.VideoCapture(str(path))
             if not capture.isOpened():
                 raise RuntimeError("OpenCV could not open this video. Try converting it to H.264 MP4 first.")
         except Exception as exc:
-            QMessageBox.critical(self, "Could not load video", str(exc))
+            self._on_video_probe_failed(str(exc), video_path)
             return
+
         if self.capture is not None:
             self.capture.release()
         self.capture = capture
@@ -820,8 +944,6 @@ class ClipCraftWindow(QMainWindow):
         self.playhead = 0
         self.position_slider.setValue(0)
         self._update_output_path()
-        if self._playing:
-            self._stop_playback()
         self._frame_index = 0
         self._scrubbing = False
         self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -829,9 +951,25 @@ class ClipCraftWindow(QMainWindow):
         if ok:
             self.current_frame = first_frame
         self.refresh_canvas()
+
+        if hasattr(self, "_import_overlay"):
+            self._import_overlay.hide_loading()
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+
         self.statusBar().showMessage(
             f"Loaded {path.name} · {info['width']}×{info['height']} · {info['fps']:.2f} fps · {duration:.2f}s"
         )
+
+    def _on_video_probe_failed(self, error_msg: str, video_path: str):
+        if hasattr(self, "_import_overlay"):
+            self._import_overlay.hide_loading()
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+
+        self.video_edit.setText(self.video_path or "")
+        self.statusBar().showMessage(f"Failed to import {Path(video_path).name}")
+        QMessageBox.critical(self, "Could not load video", error_msg)
 
     def _remember_recent_file(self, video_path: Path) -> None:
         """Persist video path in the recent files list (top 10)."""
@@ -2109,6 +2247,10 @@ class ClipCraftWindow(QMainWindow):
         )
 
     def eventFilter(self, watched, event):
+        if watched is getattr(self, "preview_view", None) and event.type() == QEvent.Type.Resize:
+            if hasattr(self, "_import_overlay") and self._import_overlay and self._import_overlay.isVisible():
+                self._import_overlay.resize(event.size())
+
         if event.type() == QEvent.Type.KeyPress:
             if self.isActiveWindow() and (watched is self or self.isAncestorOf(watched)):
                 key = event.key()
@@ -2188,7 +2330,10 @@ class ClipCraftWindow(QMainWindow):
 
 
 def launch_gui(video_path: str | None, game: str, config_path: str | Path | None = None):
+    set_app_user_model_id()
     app = QApplication.instance() or QApplication([])
+    app.setWindowIcon(get_app_icon())
     window = ClipCraftWindow(video_path, game, config_path)
+    window.setWindowIcon(get_app_icon())
     window.show()
     return app.exec()

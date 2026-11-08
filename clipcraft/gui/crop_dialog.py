@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..preview import to_qimage_array
+from .constants import get_app_icon
 
 class VisualCropHandleItem(QGraphicsRectItem):
     """Corner/edge resize handle for the visual crop rectangle."""
@@ -140,6 +141,7 @@ class VisualSourceCropDialog(QDialog):
     def __init__(self, parent, frame: np.ndarray, layer_name: str, initial_crop: list[float], on_crop_applied):
         super().__init__(parent)
         self.setWindowTitle(f"Visual Source Crop — {layer_name.replace('_', ' ').title()}")
+        self.setWindowIcon(get_app_icon())
         self.resize(1020, 680)
         self.setMinimumSize(780, 500)
 
