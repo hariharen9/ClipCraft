@@ -523,7 +523,7 @@ To maintain smooth 60fps playback with full sound synchronization:
 - **`SafeZoneOverlayItem`**: Guideline overlay visualizing YouTube Shorts and TikTok UI dead zones (Top Bar 11%, Bottom Captions 20%, Right Engagement 19%).
 
 ### 7.7 Layer Stack & Property Inspector
-- **`LayerStackWidget`**: Reorders layers via drag-and-drop or Forward/Backward buttons. Toggles visibility with vector eye icons. Displays type badges: `[VID]`, `[TXT]`, `[IMG]`.
+- **`LayerStackWidget`**: Reorders layers via drag-and-drop or Forward/Backward buttons. Toggles visibility with vector eye icons. Displays type badges: `[VID]`, `[TXT]`, `[IMG]`. The list sizes itself to the stack — 26px rows, minimum 3 and maximum 8 visible rows (`ROW_HEIGHT`/`MIN_ROWS`/`MAX_ROWS`) — so layers never collapse into a two-row box, and taller stacks scroll.
 - **`LayerInspectorWidget`**: Dynamic property inspector. Automatically toggles between Typography controls (for text layers), Asset Pickers (for image layers), and Crop Spinboxes (for video layers). The **Fade in / out** group holds the per-layer checkbox plus in/out durations (default 0.5s) and an **Apply to all** button that copies those settings to every layer.
 
 ### 7.8 Split & Cut Studio (`split_dialog.py`)

@@ -32,6 +32,10 @@ class LayerStackWidget(QWidget):
     add_text_requested = Signal()
     delete_layer_requested = Signal(str)
 
+    ROW_HEIGHT = 26
+    MIN_ROWS = 3
+    MAX_ROWS = 8
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -42,7 +46,9 @@ class LayerStackWidget(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.list_widget.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.list_widget.setMaximumHeight(140)
+        self.list_widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        # Never collapse: show at least three rows and grow with the stack.
+        self.list_widget.setMinimumHeight(self.MIN_ROWS * self.ROW_HEIGHT + 6)
         self.list_widget.setStyleSheet(
             "QListWidget { background-color: #18181c; border: 1px solid #323238; border-radius: 4px; }"
             "QListWidget::item { padding: 1px 4px; border-bottom: 1px solid #232328; }"
@@ -154,7 +160,7 @@ class LayerStackWidget(QWidget):
         for row, (name, layer) in enumerate(sorted_layers):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setSizeHint(QSize(0, 26))
+            item.setSizeHint(QSize(0, self.ROW_HEIGHT))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, self._create_item_widget(name, layer))
 
@@ -162,8 +168,14 @@ class LayerStackWidget(QWidget):
                 active_row = row
 
         self._updating = False
+        self._fit_height()
         if self.list_widget.count() > 0:
             self.list_widget.setCurrentRow(active_row)
+
+    def _fit_height(self) -> None:
+        """Grow the list with the stack, capped so the inspector stays scrollable."""
+        rows = max(self.MIN_ROWS, min(self.list_widget.count(), self.MAX_ROWS))
+        self.list_widget.setFixedHeight(rows * self.ROW_HEIGHT + 6)
 
     def select_layer(self, name: str):
         if self._updating:
@@ -264,7 +276,7 @@ class LayerStackWidget(QWidget):
             layer = self._layers_cache.get(name, {})
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, name)
-            item.setSizeHint(QSize(0, 26))
+            item.setSizeHint(QSize(0, self.ROW_HEIGHT))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, self._create_item_widget(name, layer))
             if name == selected_name:

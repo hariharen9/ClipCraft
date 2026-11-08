@@ -402,6 +402,31 @@ class TestGuiSmoke(unittest.TestCase):
             finally:
                 win.close()
 
+    def test_layer_list_grows_with_the_stack(self):
+        """Regression: the layer list was capped at 140px and collapsed to ~2 rows."""
+        from clipcraft.gui.layer_stack import LayerStackWidget
+
+        stack = LayerStackWidget()
+
+        def layers(count: int) -> dict:
+            return {
+                f"layer_{index}": {"kind": "video", "z": index * 10,
+                                   "rect": [0, 0, 1, 1], "visible": True}
+                for index in range(count)
+            }
+
+        stack.populate(layers(8), "layer_0")
+        self.assertEqual(stack.list_widget.count(), 8)
+        self.assertGreaterEqual(stack.list_widget.height(), 8 * stack.ROW_HEIGHT)
+
+        stack.populate(layers(1), "layer_0")
+        self.assertGreaterEqual(stack.list_widget.height(), stack.MIN_ROWS * stack.ROW_HEIGHT)
+
+        stack.populate(layers(20))
+        self.assertLessEqual(
+            stack.list_widget.height(), stack.MAX_ROWS * stack.ROW_HEIGHT + 6
+        )
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)
