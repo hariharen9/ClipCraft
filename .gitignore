@@ -13,5 +13,4 @@ templates/valorant.json
 *.log
 dist/
 build/
-*.ico
 

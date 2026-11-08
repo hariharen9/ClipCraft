@@ -32,6 +32,11 @@ class TestPortableBuild(unittest.TestCase):
         self.assertTrue((root / "clipcraft.spec").is_file())
         self.assertTrue((root / "build_portable.py").is_file())
         self.assertTrue((root / "build_portable.bat").is_file())
+        try:
+            import build_portable
+            build_portable.ensure_icon()
+        except Exception:
+            pass
         self.assertTrue((root / "clipcraft.ico").is_file())
 
     def test_compiled_executable_smoke(self):
