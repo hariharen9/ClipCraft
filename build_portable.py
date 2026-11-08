@@ -72,7 +72,11 @@ def locate_binary(name: str) -> Path | None:
     if winget.is_file():
         candidates.append(winget)
 
-    # 3. Common install roots
+    # 3. Chocolatey paths (standard on GitHub Actions windows-latest)
+    candidates.append(Path(f"C:/ProgramData/chocolatey/bin/{name}.exe"))
+    candidates.append(Path(f"C:/ProgramData/chocolatey/lib/ffmpeg/tools/ffmpeg/bin/{name}.exe"))
+
+    # 4. Common install roots
     for drive in ("C:", "D:"):
         candidates.append(Path(f"{drive}/ffmpeg/bin/{name}.exe"))
         candidates.append(Path(f"{drive}/Program Files/ffmpeg/bin/{name}.exe"))
@@ -209,7 +213,10 @@ def verify_executable() -> None:
 def create_portable_zip() -> Path:
     """Compress the portable folder into a distributable zip archive."""
     print("[6/6] Creating compressed portable distribution archive…")
-    zip_path = DIST_DIR / "ClipCraft_v0.1.0_Windows_Portable.zip"
+    tag_name = os.environ.get("GITHUB_REF_NAME") or "v0.1.0"
+    if not tag_name.startswith("v"):
+        tag_name = f"v{tag_name}"
+    zip_path = DIST_DIR / f"ClipCraft_{tag_name}_Windows_Portable.zip"
     if zip_path.is_file():
         zip_path.unlink()
 
