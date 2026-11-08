@@ -2252,7 +2252,15 @@ class ClipCraftWindow(QMainWindow):
                 self._import_overlay.resize(event.size())
 
         if event.type() == QEvent.Type.KeyPress:
-            if self.isActiveWindow() and (watched is self or self.isAncestorOf(watched)):
+            # This filter is installed on the QApplication, so `watched` can be a
+            # QWindow or a QGraphicsScene rather than a widget. isAncestorOf() only
+            # accepts QWidget children and raises TypeError otherwise, so gate on
+            # that first. Ignoring the non-widget receivers also prevents the same
+            # keypress being handled twice (the focused child widget gets it too).
+            is_own_child = isinstance(watched, QWidget) and (
+                watched is self or self.isAncestorOf(watched)
+            )
+            if self.isActiveWindow() and is_own_child:
                 key = event.key()
                 modifiers = event.modifiers()
                 shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)

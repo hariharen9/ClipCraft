@@ -36,6 +36,51 @@ class TestGuiSmoke(unittest.TestCase):
         transport.set_playing(False)
         self.assertIn("Play", transport.play_button.text())
 
+    def test_transport_in_out_signal_carries_value(self):
+        """Regression: Signal() declared without args broke every IN/OUT spinbox edit."""
+        transport = TransportWidget()
+        received: list[float] = []
+        transport.in_out_changed.connect(received.append)
+
+        transport.in_spin.setValue(3.5)
+        self.assertEqual(len(received), 1)
+        self.assertAlmostEqual(received[0], 3.5)
+
+        transport.out_spin.setValue(12.25)
+        self.assertEqual(len(received), 2)
+        self.assertAlmostEqual(received[1], 12.25)
+
+    def test_event_filter_tolerates_non_widget_receivers(self):
+        """Regression: the app-level filter receives QWindow/QGraphicsScene and crashed on isAncestorOf."""
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent, QWindow
+
+        win = ClipCraftWindow(None, "valorant")
+        win.isActiveWindow = lambda: True
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
+
+        try:
+            self.assertFalse(win.eventFilter(QWindow(), event))
+            self.assertFalse(win.eventFilter(win.scene, event))
+        finally:
+            win.close()
+
+    def test_event_filter_still_handles_child_widget_keys(self):
+        """The parentage guard must not stop real widget hotkeys from reaching the editor."""
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        win = ClipCraftWindow(None, "valorant")
+        win.isActiveWindow = lambda: True
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_I, Qt.KeyboardModifier.NoModifier)
+
+        try:
+            self.assertTrue(win.eventFilter(win.preview_view, event))
+            # 'I' sets the IN point at the playhead; that flows through the fixed signal.
+            self.assertAlmostEqual(win.in_spin.value(), win.playhead, places=3)
+        finally:
+            win.close()
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)

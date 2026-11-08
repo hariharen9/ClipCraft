@@ -28,7 +28,8 @@ class TransportWidget(QGroupBox):
     scrub_started = Signal()
     scrub_finished = Signal()
     speed_changed = Signal(int)
-    in_out_changed = Signal()
+    # Carries the new timestamp: both spin boxes connect valueChanged(float) here.
+    in_out_changed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Clip selection", parent)
