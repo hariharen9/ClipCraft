@@ -28,7 +28,7 @@ from .batch_window import (
     BatchRenderWorker,
     launch_batch_gui,
 )
-from .worker import RenderWorker, VideoProbeWorker
+from .worker import RenderWorker, SilenceScanWorker, VideoProbeWorker
 
 __all__ = [
     "HANDLE_SIZE",
@@ -56,6 +56,7 @@ __all__ = [
     "SplitEditorDialog",
     "SplitTimeline",
     "RenderWorker",
+    "SilenceScanWorker",
     "VideoProbeWorker",
     "ClipCraftWindow",
     "launch_gui",

@@ -49,6 +49,9 @@ run_gui.bat
 * **Smart Audio & BGM Engine**: Drag & drop any `.mp3` or `.wav` track. Automatically ducks background music when voice callouts or gunshots peak, plus smooth 0.5s fades at clip start and end.
 * **Split & Cut Anywhere**: One IN/OUT pair is not always enough. Open the **Split & Cut** studio to split a recording at any point, delete dead time, queue wipes, or silent stretches from the middle, and keep the rest — playback and export skip straight over the removed parts.
 * **Per-Layer Fades**: Give any layer — gameplay feed, killfeed crop, logo, text — its own fade in and fade out (0.5s by default). Tick the box in the layer editor, dial the seconds, or hit **Apply to all** to fade the whole composition in one click.
+* **Projects That Remember Everything**: Every trim, cut, music choice and caption set is saved to a `.clipcraft` sidecar beside your recording — automatically, 1.2 seconds after you change something. Reopen the clip tomorrow and you are exactly where you left off.
+* **Auto-Cut Silences**: One click scans your trim for dead air and drops the quiet stretches into the Split & Cut editor for review. Perfect for stripping looting, rotations and quiet reloads out of a highlight.
+* **Portable Templates**: **Save as new template…** copies your logos and overlays into the template folder and rewrites the paths, so a layout you build can actually be shared, zipped or moved to another PC.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 

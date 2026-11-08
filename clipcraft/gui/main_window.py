@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 import os
 import subprocess
@@ -45,6 +46,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -78,7 +80,17 @@ from ..config import (
     template_path,
 )
 from ..preview import layer_preview_image, render_background, to_qimage_array
+from ..project import (
+    AUTOSAVE_DELAY_MS,
+    build_project,
+    load_project,
+    project_path_for,
+    project_summary,
+    push_recent_project,
+    save_project,
+)
 from ..renderer import probe_video
+from ..template_bundle import bundle_template
 from ..segments import (
     cut_containing,
     next_kept_time,
@@ -113,7 +125,7 @@ from .split_dialog import SplitEditorDialog
 from .layer_stack import LayerStackWidget, _make_eye_icon
 from .transport_bar import TransportWidget
 from .inspector import LayerInspectorWidget
-from .worker import RenderWorker, VideoProbeWorker
+from .worker import RenderWorker, SilenceScanWorker, VideoProbeWorker
 
 class ImportLoadingOverlay(QWidget):
     """Modern translucent loading badge displayed over the preview canvas while analyzing footage."""
@@ -239,6 +251,17 @@ class ClipCraftWindow(QMainWindow):
         self._reverse_buffer: list = []
         # Removed regions (absolute source timestamps) from the Split & Cut studio.
         self._cut_regions: list[tuple[float, float]] = []
+
+        # Project sidecar: autosaved next to the recording, or wherever the user
+        # chose with "Save project as…".
+        self.project_path: Path | None = None
+        self._project_dirty = False
+        self._suppress_project_autosave = False
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.setInterval(AUTOSAVE_DELAY_MS)
+        self._autosave_timer.timeout.connect(lambda: self._save_project(silent=True))
+        self._silence_worker: SilenceScanWorker | None = None
         audio_cfg = self.config.get("audio", {})
         self.audio_config: dict[str, Any] = dict(audio_cfg)
         self.bgm_path: str | None = self.audio_config.get("bgm_path")
@@ -394,9 +417,26 @@ class ClipCraftWindow(QMainWindow):
             " QPushButton:hover { background-color: #354052; }"
             " QPushButton:disabled { color: #7b8494; }"
         )
-        self.split_btn.clicked.connect(self.open_split_dialog)
+        self.split_btn.clicked.connect(lambda: self.open_split_dialog())
         self.split_btn.setEnabled(False)
         layout.addWidget(self.split_btn)
+
+        self.silence_btn = QPushButton(" Auto-cut silences…")
+        self.silence_btn.setFixedHeight(30)
+        self.silence_btn.setIcon(qta.icon("fa5s.volume-mute", color="#dcdcdc"))
+        self.silence_btn.setToolTip(
+            "Scan the IN/OUT range for silent stretches, then review the detected cuts "
+            "in the split editor before applying them"
+        )
+        self.silence_btn.setStyleSheet(
+            "QPushButton { background-color: #20262f; color: #dcdcdc; border: 1px solid #333c49;"
+            " border-radius: 4px; }"
+            " QPushButton:hover { background-color: #2a323d; }"
+            " QPushButton:disabled { color: #6d7684; }"
+        )
+        self.silence_btn.clicked.connect(self.auto_cut_silences)
+        self.silence_btn.setEnabled(False)
+        layout.addWidget(self.silence_btn)
         self._sync_split_button()
 
         bg_group = QGroupBox("Background look")
@@ -702,6 +742,7 @@ class ClipCraftWindow(QMainWindow):
         self.inspector.undo_clicked.connect(self.undo)
         self.inspector.redo_clicked.connect(self.redo)
         self.inspector.save_layout_clicked.connect(self.save_layout)
+        self.inspector.save_template_as_clicked.connect(self.save_template_as)
         self.inspector.reset_layout_clicked.connect(self.reset_layout)
 
         # Scroll vertically so the sidebar stays usable on short screens (it needs
@@ -861,6 +902,7 @@ class ClipCraftWindow(QMainWindow):
         self._update_live_captions(cw, ch)
         count = len(self._parsed_cues)
         self.statusBar().showMessage(f"Applied Auto-Captions ({count} cues)", 3500)
+        self._mark_project_dirty()
 
     def open_audio_studio(self) -> None:
         self._stop_playback()
@@ -898,6 +940,7 @@ class ClipCraftWindow(QMainWindow):
             self._game_audio_output.setVolume(min(1.0, max(0.0, self.gameplay_volume)))
         self._sync_audio_badge()
         self.statusBar().showMessage("Audio & Music settings applied", 3000)
+        self._mark_project_dirty()
 
     def browse_bgm(self):
         self.open_audio_studio()
@@ -912,6 +955,7 @@ class ClipCraftWindow(QMainWindow):
         self._sync_bgm_player()
         self._sync_audio_badge()
         self.statusBar().showMessage(f"Loaded background music: {path.name}", 4000)
+        self._mark_project_dirty()
 
     def clear_bgm(self):
         self.bgm_path = None
@@ -919,6 +963,7 @@ class ClipCraftWindow(QMainWindow):
         self._sync_bgm_player()
         self._sync_audio_badge()
         self.statusBar().showMessage("Background music removed", 3000)
+        self._mark_project_dirty()
 
     def browse_video(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -1022,6 +1067,9 @@ class ClipCraftWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Loaded {path.name} · {info['width']}×{info['height']} · {info['fps']:.2f} fps · {duration:.2f}s"
         )
+        self._sync_split_button()
+        # If this recording has a project sidecar, pick up where it left off.
+        self._restore_project_for_video(path)
 
     def _on_video_probe_failed(self, error_msg: str, video_path: str):
         if hasattr(self, "_import_overlay"):
@@ -1068,10 +1116,29 @@ class ClipCraftWindow(QMainWindow):
         if valid_count == 0:
             empty_action = menu.addAction("No recent files")
             empty_action.setEnabled(False)
-        else:
-            menu.addSeparator()
-            clear_action = menu.addAction("Clear Recent Files")
-            clear_action.triggered.connect(self._clear_recent_files)
+
+        menu.addSeparator()
+        project_menu = menu.addMenu("Project")
+        project_menu.addAction("Save project as…").triggered.connect(self._save_project_as)
+        project_menu.addAction("Open project…").triggered.connect(self._open_project_file)
+        if self.project_path is not None:
+            project_menu.addAction("Save now").triggered.connect(
+                lambda: self._save_project(silent=False)
+            )
+            project_menu.addAction("Delete saved project").triggered.connect(self._forget_project)
+        recent_projects = [p for p in (state.get("recent_projects") or []) if Path(p).is_file()]
+        if recent_projects:
+            recent_menu = project_menu.addMenu("Recent projects")
+            for project_str in recent_projects:
+                project_action = recent_menu.addAction(Path(project_str).name)
+                project_action.setToolTip(project_str)
+                project_action.triggered.connect(
+                    lambda checked=False, target=project_str: self._load_project_from_path(Path(target))
+                )
+
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear Recent Files")
+        clear_action.triggered.connect(self._clear_recent_files)
 
         menu.exec(self.recent_button.mapToGlobal(QPointF(0, self.recent_button.height()).toPoint()))
 
@@ -1145,20 +1212,29 @@ class ClipCraftWindow(QMainWindow):
         return int(max(0.0, min(1.0, offset / total)) * 10000)
 
     def _sync_split_button(self) -> None:
+        has_video = self.video_path is not None
         if hasattr(self, "split_btn"):
-            self.split_btn.setEnabled(self.video_path is not None)
+            self.split_btn.setEnabled(has_video)
+        if hasattr(self, "silence_btn"):
+            has_audio = bool((self.video_info or {}).get("has_audio"))
+            self.silence_btn.setEnabled(has_video and has_audio)
 
-    def open_split_dialog(self) -> None:
-        """Open the split/cut studio for the loaded recording."""
+    def open_split_dialog(self, extra_cuts: list[tuple[float, float]] | None = None) -> None:
+        """Open the split/cut studio for the loaded recording.
+
+        ``extra_cuts`` lets the silence scanner pre-fill regions for review; they
+        only take effect if the user accepts the dialog.
+        """
         if not self.video_path or not self.video_info:
             self.statusBar().showMessage("Load a recording before opening the split editor")
             return
         self._stop_playback()
+        cuts = normalize_cuts(list(self._cut_regions) + list(extra_cuts or []))
         dialog = SplitEditorDialog(
             self,
             self.video_path,
             self.video_info,
-            self._cut_regions,
+            cuts,
             self.in_spin.value(),
             self.out_spin.value(),
         )
@@ -1194,6 +1270,242 @@ class ClipCraftWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage("No cuts — the full IN/OUT range will render")
+        self._mark_project_dirty()
+
+    # -- automatic silence removal -----------------------------------------
+
+    def auto_cut_silences(self) -> None:
+        """Scan the trimmed range for silence, then open the split studio prefilled."""
+        if not self.video_path or not self.video_info:
+            self.statusBar().showMessage("Load a recording first")
+            return
+        if not self.video_info.get("has_audio"):
+            QMessageBox.information(
+                self, "No audio track",
+                "This recording has no audio, so there is no silence to detect.",
+            )
+            return
+        if self._silence_worker is not None and self._silence_worker.isRunning():
+            return
+
+        self._stop_playback()
+        self.silence_btn.setEnabled(False)
+        self.statusBar().showMessage("Scanning the IN/OUT range for silent stretches…")
+        self._silence_worker = SilenceScanWorker(
+            self.video_path, self.in_spin.value(), self.out_spin.value()
+        )
+        self._silence_worker.finished_signal.connect(self._on_silence_found)
+        self._silence_worker.error_signal.connect(self._on_silence_failed)
+        self._silence_worker.start()
+
+    def _on_silence_found(self, regions: list) -> None:
+        self._sync_split_button()
+        found = normalize_cuts(regions)
+        if not found:
+            self.statusBar().showMessage(
+                "No silent stretches found in this range — try trimming tighter or a longer clip",
+                6000,
+            )
+            return
+        removed = sum(end - start for start, end in found)
+        self.statusBar().showMessage(
+            f"Found {len(found)} silent stretch{'es' if len(found) != 1 else ''} "
+            f"({removed:.1f}s) — review and apply in the split editor",
+            6000,
+        )
+        self.open_split_dialog(extra_cuts=found)
+
+    def _on_silence_failed(self, message: str) -> None:
+        self._sync_split_button()
+        QMessageBox.warning(self, "Silence scan failed", message)
+
+    # -- project sidecar: autosave, restore, recent ------------------------
+
+    def _project_payload(self) -> dict[str, Any]:
+        return build_project(
+            self.video_path or "",
+            self.game,
+            self.in_spin.value(),
+            self.out_spin.value(),
+            list(self._cut_regions),
+            audio=self.audio_config,
+            captions=self.config.get("captions"),
+            playhead=self.playhead,
+            template_path=self.config_path,
+        )
+
+    def _mark_project_dirty(self) -> None:
+        """Queue an autosave; ignored while a project is being restored."""
+        if self._suppress_project_autosave or not self.video_path:
+            return
+        self._project_dirty = True
+        if hasattr(self, "_autosave_timer"):
+            self._autosave_timer.start()
+
+    def _save_project(self, silent: bool = True, path: Path | None = None) -> Path | None:
+        if not self.video_path or not self.video_info:
+            return None
+        target = Path(path) if path else (self.project_path or project_path_for(self.video_path))
+        if target.suffix.lower() != ".clipcraft":
+            target = target.with_suffix(".clipcraft")
+        try:
+            saved = save_project(target, self._project_payload())
+        except (OSError, ValueError) as exc:
+            if not silent:
+                QMessageBox.warning(self, "Could not save project", str(exc))
+            return None
+
+        self.project_path = saved
+        self._project_dirty = False
+        self._remember_recent_project(saved)
+        if not silent:
+            self.statusBar().showMessage(f"Project saved to {saved}", 5000)
+        return saved
+
+    def _remember_recent_project(self, path: Path) -> None:
+        try:
+            state = load_state()
+            state["recent_projects"] = push_recent_project(
+                state.get("recent_projects") or [], path
+            )
+            state["last_project"] = str(path)
+            save_state(state)
+        except OSError:
+            pass
+
+    def _restore_project_for_video(self, video_path: Path) -> None:
+        """Auto-restore the sidecar beside a freshly loaded recording, if any."""
+        candidate = project_path_for(video_path)
+        if not candidate.is_file():
+            self.project_path = None
+            return
+        try:
+            data = load_project(candidate)
+        except (OSError, ValueError, json.JSONDecodeError):
+            # A corrupt sidecar must never block opening the video.
+            self.project_path = None
+            return
+        self._apply_project(data, candidate, announce=True)
+
+    def _apply_project(self, data: dict[str, Any], path: Path | None = None, announce: bool = False) -> None:
+        duration = float((self.video_info or {}).get("duration", 0.0) or 0.0)
+        self._suppress_project_autosave = True
+        try:
+            self._cut_regions = normalize_cuts(data.get("cuts") or [], duration)
+
+            in_time = min(max(0.0, float(data.get("in", 0.0))), duration)
+            out_time = min(max(in_time, float(data.get("out", duration))), duration)
+            self.in_spin.blockSignals(True)
+            self.out_spin.blockSignals(True)
+            self.in_spin.setValue(in_time)
+            self.out_spin.setValue(out_time)
+            self.in_spin.blockSignals(False)
+            self.out_spin.blockSignals(False)
+
+            audio = data.get("audio") or {}
+            if audio:
+                self._on_audio_studio_applied(audio)
+            captions = data.get("captions")
+            if captions is not None:
+                self._on_captions_applied(dict(captions))
+
+            self._validate_trim()
+            self._update_output_path()
+
+            wanted = float(data.get("playhead", in_time) or in_time)
+            wanted = next_kept_time(min(max(wanted, in_time), out_time), self._cut_regions)
+            self._frame_index = -1
+            if self._seek_to_index(int(round(wanted * self._effective_fps()))):
+                self._sync_playhead_ui()
+                self._update_frame_layers()
+            else:
+                self.refresh_canvas()
+
+            self.project_path = Path(path) if path else None
+            self._project_dirty = False
+            if path:
+                self._remember_recent_project(Path(path))
+        finally:
+            self._suppress_project_autosave = False
+
+        if announce:
+            kept = self._format_time(self._kept_duration())
+            cuts = len(self._cut_regions)
+            self.statusBar().showMessage(
+                f"Restored project · {cuts} cut{'s' if cuts != 1 else ''} · output {kept}",
+                6000,
+            )
+
+    def _open_project_file(self) -> None:
+        start_dir = str(self.project_path.parent) if self.project_path else self.source_dir
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Open ClipCraft project", start_dir,
+            "ClipCraft project (*.clipcraft);;All files (*.*)",
+        )
+        if not filename:
+            return
+        self._load_project_from_path(Path(filename))
+
+    def _load_project_from_path(self, path: Path) -> None:
+        try:
+            data = load_project(path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            QMessageBox.warning(self, "Could not open project", str(exc))
+            return
+
+        video = Path(data["video"])
+        if not video.is_file():
+            QMessageBox.warning(self, "Recording not found", f"The project points to:\n{video}")
+            return
+
+        if not self.video_path or Path(self.video_path).resolve() != video.resolve():
+            self.load_video(str(video), synchronous=True)
+            if not self.video_info:
+                return
+        # Preserve the project's template choice when it is a real template.
+        template_id = str(data.get("template") or "")
+        if template_id and template_id != self.game:
+            idx = self.game_combo.findData(template_id)
+            if idx >= 0:
+                self.game_combo.setCurrentIndex(idx)
+        self._apply_project(data, path, announce=True)
+
+    def _save_project_as(self) -> None:
+        if not self.video_path:
+            QMessageBox.information(self, "No recording", "Load a recording first.")
+            return
+        suggested = self.project_path or project_path_for(self.video_path)
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Save project as", str(suggested),
+            "ClipCraft project (*.clipcraft)",
+        )
+        if not filename:
+            return
+        self._save_project(silent=False, path=Path(filename))
+
+    def _forget_project(self) -> None:
+        """Delete the auto-saved sidecar for the current recording."""
+        if not self.video_path:
+            return
+        target = self.project_path or project_path_for(self.video_path)
+        if not target.is_file():
+            self.statusBar().showMessage("No saved project for this recording", 4000)
+            return
+        if QMessageBox.question(
+            self, "Delete saved project",
+            f"Delete the saved project?\n\n{target}\n\nThis clears the trim, cuts, audio and captions "
+            "stored for this recording.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            target.unlink()
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not delete project", str(exc))
+            return
+        self.project_path = None
+        self._project_dirty = False
+        self.statusBar().showMessage("Saved project deleted", 4000)
+
 
     # -- playback engine ---------------------------------------------------
 
@@ -1943,6 +2255,7 @@ class ClipCraftWindow(QMainWindow):
         self._update_output_path()
         self.refresh_canvas()
         self.statusBar().showMessage(f"Switched to the {self.template_name} template")
+        self._mark_project_dirty()
 
     def _remember_template(self, game_id: str) -> None:
         try:
@@ -2322,6 +2635,51 @@ class ClipCraftWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Could not save config", str(exc))
 
+    def save_template_as(self) -> None:
+        """Copy the current layout + images into a portable, shareable template."""
+        suggested = f"{self.template_name} copy"
+        name, accepted = QInputDialog.getText(
+            self, "Save as new template", "Template name:", text=suggested
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        try:
+            result = bundle_template(self.config, self.config_path, name)
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not save template", str(exc))
+            return
+
+        self.config = result.config
+        self.config_path = result.path
+        self.game = result.template_id
+        self.template_name = str(self.config.get("name") or self.game)
+        self._refresh_template_combo()
+        self._remember_template(self.game)
+        self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
+        self._rebuild_layer_combo()
+        self._mark_project_dirty()
+
+        self.statusBar().showMessage(
+            f"Template '{name}' saved with {len(result.copied)} bundled image(s)", 6000
+        )
+        if result.missing:
+            QMessageBox.warning(
+                self, "Some images were not found",
+                "These layers still point at their original paths:\n\n"
+                + "\n".join(result.missing),
+            )
+
+    def _refresh_template_combo(self) -> None:
+        self.game_combo.blockSignals(True)
+        self.game_combo.clear()
+        for template_id, template_name in available_templates():
+            self.game_combo.addItem(template_name, template_id)
+        index = self.game_combo.findData(self.game)
+        if index >= 0:
+            self.game_combo.setCurrentIndex(index)
+        self.game_combo.blockSignals(False)
+
     def reset_layout(self):
         self._snapshot("Reset layout")
         try:
@@ -2361,6 +2719,7 @@ class ClipCraftWindow(QMainWindow):
         self._update_output_path()
         # Fade-out is anchored to the clip length, so trim edits move it.
         self._apply_layer_fades()
+        self._mark_project_dirty()
 
     def _compute_output_filename(self, pattern: str | None = None) -> str:
         if not pattern:
@@ -2606,6 +2965,11 @@ class ClipCraftWindow(QMainWindow):
             QMessageBox.warning(self, "Render in progress", "Wait for the current render to finish before closing ClipCraft.")
             event.ignore()
             return
+        # Persist the edit before the window goes away.
+        if self._project_dirty and self.video_path:
+            self._save_project(silent=True)
+        if self._silence_worker is not None and self._silence_worker.isRunning():
+            self._silence_worker.wait(3000)
         event.accept()
 
 

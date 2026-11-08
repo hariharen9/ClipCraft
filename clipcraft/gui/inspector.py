@@ -59,6 +59,7 @@ class LayerInspectorWidget(QWidget):
     undo_clicked = Signal()
     redo_clicked = Signal()
     save_layout_clicked = Signal()
+    save_template_as_clicked = Signal()
     reset_layout_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None):
@@ -299,6 +300,14 @@ class LayerInspectorWidget(QWidget):
         self.save_button.setIcon(qta.icon("fa5s.save", color="#dcdcdc"))
         self.save_button.clicked.connect(self.save_layout_clicked.emit)
         actions_layout.addWidget(self.save_button)
+
+        self.save_as_button = QPushButton(" Save as new template…")
+        self.save_as_button.setIcon(qta.icon("fa5s.copy", color="#dcdcdc"))
+        self.save_as_button.setToolTip(
+            "Copy this layout and its images into templates/assets/ so it works on any machine"
+        )
+        self.save_as_button.clicked.connect(self.save_template_as_clicked.emit)
+        actions_layout.addWidget(self.save_as_button)
 
         self.reset_button = QPushButton(" Reset to saved layout")
         self.reset_button.setIcon(qta.icon("fa5s.sync-alt", color="#dcdcdc"))

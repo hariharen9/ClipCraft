@@ -25,6 +25,7 @@
    - [7.6 Canvas Items, Grips & Safe Zones (`canvas_items.py`)](#76-canvas-items-grips--safe-zones-canvas_itemspy)
    - [7.7 Layer Stack & Property Inspector](#77-layer-stack--property-inspector)
    - [7.8 Split & Cut Studio (`split_dialog.py`)](#78-split--cut-studio-split_dialogpy)
+   - [7.9 Projects, Autosave & Portable Templates](#79-projects-autosave--portable-templates)
 8. [Comprehensive API, Class & Function Index](#8-comprehensive-api-class--function-index)
 9. [Keyboard Shortcuts & Pro NLE Controls](#9-keyboard-shortcuts--pro-nle-controls)
 10. [Testing Suite & Quality Verification](#10-testing-suite--quality-verification)
@@ -75,6 +76,9 @@ ClipCraft/
 │   ├── renderer.py                    # FFmpeg command builder, filter_complex graph generator, subprocess runner
 │   ├── preview.py                     # OpenCV/PIL software compositor mirroring FFmpeg in real time
 │   ├── segments.py                    # Cut-list math: kept spans, timeline<->source mapping, cut-aware stepping
+│   ├── project.py                     # .clipcraft sidecar: build/normalize/atomic save/load, recent projects
+│   ├── silence.py                     # FFmpeg silencedetect parsing → cut regions for auto silence removal
+│   ├── template_bundle.py             # Copy a template's images into templates/assets/<id>/ and rewrite paths
 │   ├── batch_gui.py                   # Backward-compatibility import shim for BatchWindow
 │   │
 │   └── gui/                           # Modular PySide6 GUI Package
@@ -109,6 +113,10 @@ ClipCraft/
 │   ├── test_segments.py               # Cut math: normalization, kept spans, timeline mapping, cut-aware stepping
 │   ├── test_render_cuts.py            # Trim/concat graph assembly + frame-exact end-to-end cut render
 │   ├── test_fades.py                  # Per-layer fade chain + end-to-end alpha/colour fade renders
+│   ├── test_project.py                # Sidecar build/normalize/save/load, version guard, recent list
+│   ├── test_project_gui.py            # Autosave, restore, dirty marking, prefilled silence cuts, template save-as
+│   ├── test_silence.py                # silencedetect parsing, padding, end-to-end tone/silence detection
+│   ├── test_template_bundle.py        # Asset copying, path rewriting, id collisions, shared images
 │   ├── test_state.py                  # Atomic state persistence, corruption handling, path resolution
 │   ├── test_templates.py              # Template schema validation & config cloning
 │   └── test_tokens.py                 # Dynamic filename token substitution & formatting
@@ -259,6 +267,31 @@ Dynamic patterns configured in `output_pattern` are resolved during export:
 | `{date}` | Current system date (`YYYY-MM-DD`) | `2026-11-07` |
 | `{time}` | Current system time (`HHMMSS`) | `143015` |
 | `{res}` | Canvas resolution string | `1080x1920` |
+
+### 4.4 Project Sidecar (`<recording>.clipcraft`)
+
+A template is *how* a short looks; a project is *this* edit. The sidecar lives next to the recording (`clutch.mp4` → `clutch.clipcraft`) and is written atomically:
+
+```json
+{
+  "version": 1,
+  "video": "D:/Captures/clutch.mp4",
+  "template": "valorant",
+  "template_path": "E:/Projects/ClipCraft/templates/valorant.json",
+  "in": 2.5,
+  "out": 42.0,
+  "cuts": [[10.0, 13.0]],
+  "audio": {"bgm_path": "song.mp3", "bgm_volume": 0.4},
+  "captions": {"enabled": true, "cues": []},
+  "playhead": 5.0,
+  "saved_at": "2026-11-08T15:00:00"
+}
+```
+
+- **Autosave**: trim edits, applied cuts, audio/caption changes and template switches mark the project dirty and schedule a write 1.2 s later (`AUTOSAVE_DELAY_MS`); closing the window flushes it.
+- **Restore**: opening a recording automatically applies its sidecar, including cuts. A corrupt sidecar is ignored (the video still opens); a `version` newer than the build raises a clear error.
+- **Recent projects** live in the state file (`recent_projects`, capped at 10) and appear under *Recent ▾ → Project*.
+- The `template`/`template_path` fields are references only — layout edits still live in the template.
 
 ---
 
@@ -481,6 +514,13 @@ To maintain smooth 60fps playback with full sound synchronization:
 - **Preview**: decodes frames with OpenCV (`CAP_PROP_POS_FRAMES`), with a 55 ms debounce so dragging the playhead stays responsive; playback hops over removed regions.
 - **Keyboard**: `Space` play/pause, `←`/`→` step a frame, `S` split at playhead, `Del`/`Backspace` delete selected segment, `I`/`O` set IN/OUT.
 - Painting detail: `QPainter.drawRect()` fills with the *current brush*. Always set `Qt.BrushStyle.NoBrush` before outline-only draws, otherwise a leftover brush floods neighbouring rectangles.
+- **Auto-cut silences**: the **Auto-cut silences…** button runs `clipcraft.silence.detect_silence()` on a `SilenceScanWorker` thread over the IN/OUT range (`silencedetect=noise=-35dB:d=0.35`), shrinks each region by 0.08 s so quiet speech tails survive, and opens this dialog **pre-filled** with the results. Nothing changes until the user accepts.
+
+### 7.9 Projects, Autosave & Portable Templates
+- **Project lifecycle**: `_on_video_probed()` calls `_restore_project_for_video()`, which applies the sidecar beside the recording. Trim/cut/audio/caption edits call `_mark_project_dirty()`, debouncing an atomic write after 1.2 s; `closeEvent` flushes pending changes.
+- **Restore guard**: `_apply_project()` runs with `_suppress_project_autosave = True` so restoring cannot immediately re-save (or fight with the file it just read).
+- **Project menu**: *Recent ▾ → Project* offers Save project as…, Open project…, Save now, Delete saved project and a Recent projects submenu (state key `recent_projects`).
+- **Portable templates**: **Save as new template…** calls `clipcraft.template_bundle.bundle_template()`, which deep-copies the config, copies every image layer into `templates/assets/<id>/` (one copy per distinct source), rewrites `asset` to a forward-slash relative path, assigns a unique id (`same_name`, `same_name_2`, …) and saves with `save_config()`. Missing images are reported and left pointing at their original path. This is what makes a template survive the portable build or a shared ZIP — absolute `D:/...` paths otherwise work on exactly one machine.
 
 ---
 
@@ -517,6 +557,22 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `source_to_timeline(t, start, end, cuts) -> float` / `timeline_to_source(offset, ...) -> float`: Scrubber mapping between edited and source time.
 - `cut_containing(t, cuts) -> Cut | None`, `next_kept_time`, `previous_kept_time`: Removed-region lookup and snapping.
 - `step_time(t, delta, start, end, cuts) -> float`: Cut-aware frame stepping / shuttle advance.
+
+### Module: `clipcraft.project`
+- `project_path_for(video) -> Path`: Sidecar location (`<stem>.clipcraft`).
+- `build_project(video, template_id, in, out, cuts, audio, captions, playhead, template_path) -> dict`: Assemble the payload.
+- `normalize_project(data) -> dict`: Validate/clamp/migrate; raises `ValueError` for unusable or newer-version files.
+- `save_project(path, project) -> Path` / `load_project(path) -> dict`: Atomic write / validated read.
+- `push_recent_project(existing, path) -> list[str]`: Recent list helper (capped at 10).
+
+### Module: `clipcraft.silence`
+- `parse_silencedetect(stderr, start_offset=0.0, total=None) -> list[Cut]`: Parse FFmpeg log lines into absolute regions.
+- `detect_silence(video, start, end, noise_db=-35, min_silence=0.35, padding=0.08) -> list[Cut]`: Run `silencedetect` over the range.
+- `total_cut_time(regions) -> float`: Sum of removed time.
+
+### Module: `clipcraft.template_bundle`
+- `slugify(name) -> str`: Filesystem-safe template id.
+- `bundle_template(config, config_path, name, templates_dir=None) -> BundleResult`: Copy images to `templates/assets/<id>/`, rewrite paths, save the new template.
 
 ### Module: `clipcraft.captions`
 - `CaptionWord`: Dataclass storing word string, start timestamp, end timestamp, and probability.
@@ -592,6 +648,10 @@ Run the entire automated test suite:
 - `tests/test_segments.py`: Cut normalization, kept spans, timeline mapping and cut-aware stepping (including exact-boundary steps).
 - `tests/test_render_cuts.py`: Trim/concat graph structure plus a frame-exact end-to-end render that decodes grey-coded frames to prove the removed ones are gone.
 - `tests/test_fades.py`: Fade-chain unit tests (defaults, clamping, background colour fade) plus renders that measure the darkened first/last frames and the alpha ramp of an overlaid image.
+- `tests/test_project.py`: Sidecar round-trip, atomic write, trim repair, version guard, corrupt JSON, recent list.
+- `tests/test_project_gui.py`: Autosave writes + restore, corrupt sidecar resilience, dirty marking, detected cuts reaching the split dialog, template save-as bundling, deleting a sidecar.
+- `tests/test_silence.py`: `silencedetect` parsing (offsets, unclosed silence), padding shrink, and an end-to-end tone/silence scan.
+- `tests/test_template_bundle.py`: Image copying, relative path rewrite, id collisions, shared-image de-duplication, missing assets.
 - `tests/test_state.py`: Verifies state resolution (portable vs OS directory), atomic file write/swap, and corrupted JSON resilience.
 - `tests/test_templates.py`: Enforces schema validity, layer types, and rect geometry across all files in `templates/`.
 - `tests/test_tokens.py`: Tests `format_token_time` and token substitution patterns.
@@ -610,6 +670,8 @@ Run the entire automated test suite:
 7. **Cuts Are Pairs of Trims**: A cut region must be removed from **both** video and audio in the same filter graph (`trim`/`setpts` and `atrim`/`asetpts`), and the exported duration must be `timeline_duration()`, never `out - in`. Any new feature that seeks the source (playback, scrubbing, stepping, thumbnails) must go through `clipcraft.segments` so removed regions are skipped consistently.
 8. **No Hidden Removed Footage**: `_play_tick`, `_reverse_tick`, `step_frames` and the scrubber must never rest inside a cut. If you add a new seek path, route it through `next_kept_time`/`previous_kept_time`/`step_time`.
 9. **Fades Are Alpha Ramps**: Per-layer fades must stay on the *edited* timeline (fade-out ends on the last exported frame, cuts do not stretch them). Overlaid layers fade their alpha over whatever is underneath; the background fades colour to black because its alpha is discarded by `format=yuv420p`. The preview applies the identical ramp through `_layer_fade_factor()` — do not bake opacity into `layer_preview_image()`, or fades will double-apply.
+10. **Autosave Must Not Fight Restore**: Anything that writes the project sidecar must respect `_suppress_project_autosave`; `_apply_project()` sets it while restoring. A corrupt or newer sidecar must never prevent a recording from opening.
+11. **Templates Must Be Portable**: A template shipped or shared must not depend on absolute machine paths. Use `Save as new template…` (`bundle_template`) so images live in `templates/assets/<id>/` and `layer["asset"]` stays a relative POSIX path.
 
 ---
 

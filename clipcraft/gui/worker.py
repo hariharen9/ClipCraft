@@ -25,6 +25,34 @@ class VideoProbeWorker(QThread):
             self.error_signal.emit(str(exc), str(self.video_path))
 
 
+class SilenceScanWorker(QThread):
+    """Runs FFmpeg silencedetect off the UI thread.
+
+    Scanning is audio-only and quick, but it still decodes the whole range, so
+    keeping it off the GUI thread avoids a frozen window on long recordings.
+    """
+
+    finished_signal = Signal(list)   # list[tuple[float, float]]
+    error_signal = Signal(str)
+
+    def __init__(self, video: str, start: float, end: float, parent=None):
+        super().__init__(parent)
+        self.video = str(video)
+        # Never name these `self.start`: that would shadow QThread.start().
+        self.start_time = float(start)
+        self.end_time = float(end)
+
+    def run(self):
+        try:
+            from ..silence import detect_silence
+
+            self.finished_signal.emit(
+                detect_silence(self.video, self.start_time, self.end_time)
+            )
+        except Exception as exc:
+            self.error_signal.emit(str(exc))
+
+
 class RenderWorker(QThread):
     progress_signal = Signal(float, str)
     finished_signal = Signal(bool, str)
