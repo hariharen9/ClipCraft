@@ -272,6 +272,45 @@ class TestGuiSmoke(unittest.TestCase):
         finally:
             win.close()
 
+    def test_batch_preview_matches_main_window_fades(self):
+        """Regression: the batch preview ignored fades and disagreed with the render."""
+        from clipcraft.gui.batch_window import _layer_fade_factor
+
+        layer = {"fade_enabled": True, "fade_in": 1.0, "fade_out": 1.0}
+        self.assertEqual(_layer_fade_factor(layer, None, 10.0), 1.0)
+        self.assertAlmostEqual(_layer_fade_factor(layer, 0.0, 10.0), 0.0)
+        self.assertAlmostEqual(_layer_fade_factor(layer, 0.5, 10.0), 0.5)
+        self.assertAlmostEqual(_layer_fade_factor(layer, 5.0, 10.0), 1.0)
+        self.assertAlmostEqual(_layer_fade_factor(layer, 9.5, 10.0), 0.5)
+        self.assertEqual(_layer_fade_factor({"fade_enabled": False}, 0.0, 10.0), 1.0)
+
+    def test_batch_preview_darkens_faded_background(self):
+        batch = BatchWindow("valorant")
+        try:
+            batch._config = {
+                "background": {"blur": 1, "brightness": 0.0, "saturation": 1.0},
+                "layers": {
+                    "background": {"kind": "background", "rect": [0, 0, 1, 1], "z": 0,
+                                   "visible": True, "fade_enabled": True,
+                                   "fade_in": 1.0, "fade_out": 1.0},
+                },
+            }
+            frame = np.full((180, 320, 3), 140, dtype=np.uint8)
+            batch._preview_duration = 10.0
+
+            batch._preview_elapsed = 0.0
+            batch._display_render_preview(frame)
+            faded = batch._render_preview_label.pixmap().toImage().pixelColor(5, 5).getRgb()[0]
+
+            batch._preview_elapsed = 5.0
+            batch._display_render_preview(frame)
+            bright = batch._render_preview_label.pixmap().toImage().pixelColor(5, 5).getRgb()[0]
+
+            self.assertLess(faded, 10)
+            self.assertGreater(bright, 60)
+        finally:
+            batch.close()
+
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()
         self.assertIsNotNone(inspector.layer_stack)

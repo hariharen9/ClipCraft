@@ -265,6 +265,26 @@ class BatchRenderWorker(QThread):
 # ── Main Window ─────────────────────────────────────────────────────
 
 
+def _layer_fade_factor(layer: dict[str, Any], elapsed: float | None, duration: float) -> float:
+    """Fade multiplier for a layer at ``elapsed`` seconds into the trimmed clip.
+
+    Mirrors ``ClipCraftWindow._layer_fade_factor`` so the batch preview and the
+    exported video agree. ``elapsed`` of ``None`` means no time context yet.
+    """
+    if not layer.get("fade_enabled", False) or elapsed is None:
+        return 1.0
+    if duration <= 1e-6 or elapsed < 0.0 or elapsed > duration + 1e-9:
+        return 1.0
+    fade_in = max(0.0, float(layer.get("fade_in", 0.5)))
+    fade_out = max(0.0, float(layer.get("fade_out", 0.5)))
+    factor = 1.0
+    if fade_in > 1e-6:
+        factor = min(factor, elapsed / fade_in)
+    if fade_out > 1e-6:
+        factor = min(factor, (duration - elapsed) / fade_out)
+    return max(0.0, min(1.0, factor))
+
+
 class BatchWindow(QMainWindow):
     """Batch trim & render window with live 9:16 layout preview."""
 
@@ -291,6 +311,10 @@ class BatchWindow(QMainWindow):
         self._playing = False
         self._render_worker: BatchRenderWorker | None = None
         self._cached_image_layers: list[dict[str, Any]] = []
+        # Position within the active trim, used to preview per-layer fades.
+        # None means "no time context": layers render at full opacity.
+        self._preview_elapsed: float | None = None
+        self._preview_duration: float = 0.0
 
         self._play_timer = QTimer(self)
         self._play_timer.setInterval(33)  # ~30 fps preview
@@ -841,6 +865,8 @@ class BatchWindow(QMainWindow):
             return
         job = self._jobs[self._active_index]
         t = max(0.0, min(job.duration, t))
+        self._preview_elapsed = t - job.in_time
+        self._preview_duration = max(1e-3, job.out_time - job.in_time)
         self._capture.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
         ok, frame = self._capture.read()
         if ok and frame is not None:
@@ -868,11 +894,16 @@ class BatchWindow(QMainWindow):
             pw = int(round(ph * 9 / 16))
 
         # 1. Render blurred background
+        layers = self._config.get("layers", {})
+        elapsed, duration = self._preview_elapsed, self._preview_duration
         comp = render_background(frame, pw, ph, self._config)
+        # The background fades to black rather than revealing anything behind it.
+        bg_fade = _layer_fade_factor(layers.get("background", {}), elapsed, duration)
+        if bg_fade < 0.9999:
+            comp = cv2.convertScaleAbs(comp, alpha=bg_fade, beta=0.0)
         pix = QPixmap.fromImage(to_qimage_array(comp))
 
         # 2. Render all layers in strict ascending z-order
-        layers = self._config.get("layers", {})
         sorted_layers = sorted(
             [p for p in layers.items() if p[0] != "background" and p[1].get("visible", True)],
             key=lambda p: p[1].get("z", 0),
@@ -889,6 +920,7 @@ class BatchWindow(QMainWindow):
             w = max(2, int(round(float(rect[2]) * pw)))
             h = max(2, int(round(float(rect[3]) * ph)))
             opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            opacity *= _layer_fade_factor(layer, elapsed, duration)
             painter.setOpacity(opacity)
 
             if kind == "video":
@@ -956,6 +988,8 @@ class BatchWindow(QMainWindow):
             self._seek_to(job.in_time)  # loop back to IN
             return
         self._current_frame = frame
+        self._preview_elapsed = max(0.0, t - job.in_time)
+        self._preview_duration = max(1e-3, job.out_time - job.in_time)
         self._display_frame(frame)
         self._display_render_preview(frame)
         self._timeline.set_position(t)

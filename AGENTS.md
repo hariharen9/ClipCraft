@@ -455,7 +455,8 @@ To maintain smooth 60fps playback with full sound synchronization:
 ### 7.4 Batch Studio (`BatchWindow` & `BatchRenderWorker`)
 - Multi-clip queue interface managing `BatchJob` dataclasses.
 - Custom `TrimTimeline` widget: Self-painting Qt widget displaying IN/OUT flags, duration brackets, and draggable playhead.
-- **Live 9:16 Preview**: Composited on the fly using OpenCV and pre-cached PIL assets.
+- **Live 9:16 Preview**: Composited on the fly using OpenCV and pre-cached PIL assets. It honours static layer opacity **and per-layer fades** through `_layer_fade_factor()` (background fades to black by scaling pixels; overlaid layers fade via painter opacity), so the preview matches the exported file.
+- **No cut support yet**: batch jobs carry only `in_time`/`out_time`. `run_render` accepts `cuts`, but the batch UI does not expose the Split & Cut studio.
 - **Background Execution**: `BatchRenderWorker` (`QThread`) executes jobs sequentially while streaming progress to dual progress bars (job progress and overall queue progress).
 
 ### 7.5 Visual Source Crop System (`VisualSourceCropDialog`)
