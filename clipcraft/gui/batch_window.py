@@ -887,11 +887,17 @@ class BatchWindow(QMainWindow):
 
     def _display_render_preview(self, frame: np.ndarray):
         """Composes and renders the live 9:16 vertical short layout preview in strict z-order."""
-        pw = max(180, min(360, self._render_preview_label.width()))
-        ph = max(320, int(round(pw * 16 / 9)))
-        if ph > self._render_preview_label.height():
-            ph = max(320, self._render_preview_label.height() - 8)
-            pw = int(round(ph * 9 / 16))
+        canvas = self._config.get("canvas", {})
+        canvas_w = float(canvas.get("width", 1080) or 1080)
+        canvas_h = float(canvas.get("height", 1920) or 1920)
+        ratio = canvas_w / max(1.0, canvas_h)
+        label_w = max(180, self._render_preview_label.width())
+        label_h = max(180, self._render_preview_label.height())
+        pw = min(360, label_w)
+        ph = int(round(pw / ratio))
+        if ph > label_h:
+            ph = max(120, label_h - 8)
+            pw = max(120, int(round(ph * ratio)))
 
         # 1. Render blurred background
         layers = self._config.get("layers", {})

@@ -27,6 +27,15 @@ RENDER_PRESETS: dict[str, dict[str, Any]] = {
     "Best Quality 60fps": {"fps": 60, "quality": 14, "encoder": "nvenc"},
 }
 
+# Canonical delivery ratios. Templates already define their own canvas; these are
+# one-click sizes for the render panel (all even for H.264 4:2:0).
+ASPECT_PRESETS: dict[str, tuple[int, int]] = {
+    "9:16 · Shorts / TikTok / Reels (1080×1920)": (1080, 1920),
+    "4:5 · Instagram feed (1080×1350)": (1080, 1350),
+    "1:1 · Square (1080×1080)": (1080, 1080),
+    "16:9 · Landscape / YouTube (1920×1080)": (1920, 1080),
+}
+
 SUPPORTED_VIDEO_EXTENSIONS: set[str] = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 SUPPORTED_AUDIO_EXTENSIONS: set[str] = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
 

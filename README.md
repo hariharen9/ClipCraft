@@ -52,6 +52,8 @@ run_gui.bat
 * **Projects That Remember Everything**: Every trim, cut, music choice and caption set is saved to a `.clipcraft` sidecar beside your recording — automatically, 1.2 seconds after you change something. Reopen the clip tomorrow and you are exactly where you left off.
 * **Auto-Cut Silences**: One click scans your trim for dead air and drops the quiet stretches into the Split & Cut editor for review. Perfect for stripping looting, rotations and quiet reloads out of a highlight.
 * **Portable Templates**: **Save as new template…** copies your logos and overlays into the template folder and rewrites the paths, so a layout you build can actually be shared, zipped or moved to another PC.
+* **Keyframe Animation**: Select any layer, hit **Animate…**, and a dedicated studio opens with a keyframe strip. Move a logo, slide a caption in, drift your watermark — keys are timed against the exported clip, so trimming or cutting never shifts the motion.
+* **Any Aspect Ratio**: Not every short is 9:16. The render panel now has canonical **Aspect** presets (9:16, 4:5, 1:1, 16:9) and the preview canvas follows the template's real shape instead of assuming vertical.
 * **Mobile Safe-Zone Guides**: One-click overlay ensures your titles and action never get obscured by TikTok or YouTube Shorts buttons and captions.
 * **Zero Waiting (Batch Studio)**: Queue up an entire session's worth of highlights and render them sequentially in the background while you grab a coffee.
 

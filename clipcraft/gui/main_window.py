@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..anim import keys_for_layer, sample as sample_animation
 from ..assets import ensure_assets
 from ..config import (
     available_templates,
@@ -104,6 +105,7 @@ from ..segments import (
 
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .constants import (
+    ASPECT_PRESETS,
     AUDIO_DEFAULTS,
     BG_DEFAULTS,
     BG_PRESETS,
@@ -118,6 +120,7 @@ from .constants import (
     get_app_icon,
     set_app_user_model_id,
 )
+from .anim_dialog import AnimationDialog
 from .crop_dialog import VisualSourceCropDialog
 from .audio_dialog import AudioStudioDialog
 from .caption_dialog import CaptionStudioDialog
@@ -590,6 +593,17 @@ class ClipCraftWindow(QMainWindow):
             self.render_preset_combo.addItem(r_name, r_name)
         self.render_preset_combo.currentIndexChanged.connect(self._on_render_preset_selected)
         render_form.addRow("Preset", self.render_preset_combo)
+
+        self.aspect_combo = QComboBox()
+        self.aspect_combo.addItem("Custom", "")
+        for aspect_label, aspect_size in ASPECT_PRESETS.items():
+            self.aspect_combo.addItem(aspect_label, f"{aspect_size[0]}x{aspect_size[1]}")
+        self.aspect_combo.setToolTip(
+            "Canonical delivery sizes. The template defines the canvas; this sets it in one click."
+        )
+        self.aspect_combo.currentIndexChanged.connect(self._on_aspect_selected)
+        render_form.addRow("Aspect", self.aspect_combo)
+
         self.width_spin = QSpinBox()
         self.width_spin.setRange(180, 4320)
         self.width_spin.setSingleStep(2)
@@ -608,6 +622,9 @@ class ClipCraftWindow(QMainWindow):
         self.height_spin.setValue(int(self.config["canvas"].get("height", 1920)))
         self.fps_spin.setValue(int(self.config["canvas"].get("fps", 60)))
         self.quality_spin.setValue(int(self.config["canvas"].get("quality", 19)))
+        self.width_spin.editingFinished.connect(self._apply_canvas_size)
+        self.height_spin.editingFinished.connect(self._apply_canvas_size)
+        self._sync_aspect_combo()
         render_form.addRow("Width", self.width_spin)
         render_form.addRow("Height", self.height_spin)
         render_form.addRow("FPS", self.fps_spin)
@@ -727,6 +744,7 @@ class ClipCraftWindow(QMainWindow):
         self.inspector.opacity_changed.connect(self._opacity_slider_changed)
         self.inspector.fade_changed.connect(self._on_fade_changed)
         self.inspector.fade_apply_all_clicked.connect(self._apply_fade_to_all)
+        self.inspector.animate_clicked.connect(self.open_animation_dialog)
         self.inspector.text_content_edited.connect(self._on_text_content_edited)
         self.inspector.text_prop_changed.connect(self._on_text_prop_changed)
         self.inspector.text_color_clicked.connect(self._choose_text_color)
@@ -1516,7 +1534,13 @@ class ClipCraftWindow(QMainWindow):
         return max(1.0, min(240.0, fps))
 
     def _preview_size(self) -> tuple[int, int]:
-        return int(360 * self.preview_scale), int(640 * self.preview_scale)
+        """Preview canvas in scene units, preserving the template's aspect ratio."""
+        canvas = self.config.get("canvas", {})
+        canvas_w = max(1.0, float(canvas.get("width", 1080) or 1080))
+        canvas_h = max(1.0, float(canvas.get("height", 1920) or 1920))
+        # Fit the canvas inside a 360x640 box so 9:16 looks exactly as before.
+        scale = min(360.0 / canvas_w, 640.0 / canvas_h) * self.preview_scale
+        return max(2, int(round(canvas_w * scale))), max(2, int(round(canvas_h * scale)))
 
     def _seek_to_index(self, index: int) -> bool:
         """Random-access seek (scrub / stepping / loop) — used sparingly, never per playback tick."""
@@ -1569,6 +1593,7 @@ class ClipCraftWindow(QMainWindow):
         self.position_slider.blockSignals(False)
         self._update_time_label()
         self._apply_layer_fades()
+        self._apply_layer_animations()
 
     def _start_playback(self, direction: int = 1, reset_speed: bool = False) -> None:
         if self.capture is None or not self.video_info:
@@ -2092,6 +2117,83 @@ class ClipCraftWindow(QMainWindow):
             background_layer = self.config.get("layers", {}).get("background", {})
             self._bg_item.setOpacity(self._layer_fade_factor(background_layer))
 
+    # -- layer animation (position keyframes) ------------------------------
+
+    def open_animation_dialog(self) -> None:
+        """Open the keyframe studio for the selected layer."""
+        name = self._active_layer_name()
+        layer = self.config.get("layers", {}).get(name)
+        if not layer:
+            return
+        if not self.video_info:
+            self.statusBar().showMessage("Load a recording before animating a layer")
+            return
+        self._stop_playback()
+        dialog = AnimationDialog(
+            self,
+            name,
+            layer,
+            self._kept_duration(),
+            self.video_path or "",
+            self.in_spin.value(),
+            self.out_spin.value(),
+            self._cut_regions,
+            self.config,
+            self.config_path,
+            self._effective_fps(),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        keys = dialog.result_keys()
+        self._snapshot(f"Animate {name.replace('_', ' ')}")
+        if keys:
+            layer["anim"] = {"keys": keys}
+        else:
+            layer.pop("anim", None)
+        self._mark_project_dirty()
+        self.refresh_canvas()
+        if keys:
+            self.statusBar().showMessage(
+                f"{len(keys)} keyframe{'s' if len(keys) != 1 else ''} on {name.replace('_', ' ')}",
+                4000,
+            )
+        else:
+            self.statusBar().showMessage(f"Animation cleared on {name.replace('_', ' ')}", 4000)
+
+
+    def _animation_time(self) -> float:
+        """Playhead position on the edited timeline, clamped to the export range."""
+        duration = self._kept_duration()
+        if duration <= 0:
+            return 0.0
+        elapsed = source_to_timeline(
+            self.playhead, self.in_spin.value(), self.out_spin.value(), self._cut_regions
+        )
+        return max(0.0, min(duration, elapsed))
+
+    def _apply_layer_animations(self) -> None:
+        """Move animated layers to their keyframed centre at the current playhead."""
+        if not self.video_info:
+            return
+        duration = self._kept_duration()
+        if duration <= 0:
+            return
+        elapsed = self._animation_time()
+        canvas_w, canvas_h = self._preview_size()
+        for name, item in self.layer_items.items():
+            layer = self.config.get("layers", {}).get(name, {})
+            keys = keys_for_layer(layer, duration)
+            if len(keys) < 2:
+                continue
+            center = sample_animation(keys, elapsed)
+            if center is None:
+                continue
+            rect = layer.get("rect", [0.0, 0.0, 0.1, 0.1])
+            item.setPos(
+                (center[0] - float(rect[2]) / 2.0) * canvas_w,
+                (center[1] - float(rect[3]) / 2.0) * canvas_h,
+            )
+
     def toggle_layer_visible(self, state: int):
         name = self._active_layer_name()
         visible = state == int(Qt.CheckState.Checked.value)
@@ -2251,6 +2353,7 @@ class ClipCraftWindow(QMainWindow):
         self.template_name = str(self.config.get("name") or game_id.replace("_", " ").title())
         self.setWindowTitle(f"ClipCraft Video Editor — {self.template_name}")
         self._remember_template(game_id)
+        self._sync_canvas_controls()
         self._rebuild_layer_combo()
         self._update_output_path()
         self.refresh_canvas()
@@ -2443,6 +2546,63 @@ class ClipCraftWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Applied render preset: {p_name} (FPS={preset['fps']}, Quality={preset['quality']})")
 
+    # -- canvas aspect presets ---------------------------------------------
+
+    def _on_aspect_selected(self, index: int) -> None:
+        size = str(self.aspect_combo.itemData(index) or "")
+        if not size:
+            return  # "Custom" — the spin boxes stay authoritative.
+        try:
+            width, height = (int(part) for part in size.split("x"))
+        except ValueError:
+            return
+        for spin, value in ((self.width_spin, width), (self.height_spin, height)):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self._apply_canvas_size()
+
+    def _apply_canvas_size(self) -> None:
+        canvas = self.config.setdefault("canvas", {})
+        width = int(self.width_spin.value())
+        height = int(self.height_spin.value())
+        width -= width % 2  # H.264 4:2:0 needs even dimensions.
+        height -= height % 2
+        if width == int(canvas.get("width", 0)) and height == int(canvas.get("height", 0)):
+            self._sync_aspect_combo()
+            return
+        canvas["width"] = width
+        canvas["height"] = height
+        self._sync_aspect_combo()
+        self._mark_project_dirty()
+        self.refresh_canvas()
+        self.statusBar().showMessage(
+            f"Canvas set to {width}×{height} ({width / height:.3f}:1)", 4000
+        )
+
+    def _sync_aspect_combo(self) -> None:
+        if not hasattr(self, "aspect_combo"):
+            return
+        size = f"{int(self.width_spin.value())}x{int(self.height_spin.value())}"
+        index = self.aspect_combo.findData(size)
+        if index < 0:
+            index = 0
+        self.aspect_combo.blockSignals(True)
+        self.aspect_combo.setCurrentIndex(index)
+        self.aspect_combo.blockSignals(False)
+
+    def _sync_canvas_controls(self) -> None:
+        """Reload the render panel's size controls from the active template."""
+        canvas = self.config.get("canvas", {})
+        for spin, key in (
+            (self.width_spin, "width"), (self.height_spin, "height"),
+            (self.fps_spin, "fps"), (self.quality_spin, "quality"),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(int(canvas.get(key, spin.value())))
+            spin.blockSignals(False)
+        self._sync_aspect_combo()
+
     def _sync_background_controls(self):
         background = self.config.get("background", {})
         for key, (slider, value_label, scale, decimals) in self.bg_sliders.items():
@@ -2523,6 +2683,7 @@ class ClipCraftWindow(QMainWindow):
         self.select_layer()
         self._sync_background_controls()
         self._apply_layer_fades()
+        self._apply_layer_animations()
         self.preview_view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def browse_output(self):

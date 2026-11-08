@@ -14,6 +14,7 @@ from .constants import (
 )
 from .canvas_items import HandleItem, LayerItem, SafeZoneOverlayItem
 from .crop_dialog import VisualCropBoxItem, VisualCropHandleItem, VisualSourceCropDialog
+from .anim_dialog import AnimationDialog, AnimTimeline
 from .audio_dialog import AudioStudioDialog
 from .caption_dialog import CaptionStudioDialog
 from .split_dialog import SplitEditorDialog, SplitTimeline
@@ -51,6 +52,8 @@ __all__ = [
     "VisualCropHandleItem",
     "VisualCropBoxItem",
     "VisualSourceCropDialog",
+    "AnimationDialog",
+    "AnimTimeline",
     "AudioStudioDialog",
     "CaptionStudioDialog",
     "SplitEditorDialog",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+
 import numpy as np
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from clipcraft.gui import (
     ClipCraftWindow,
@@ -310,6 +312,95 @@ class TestGuiSmoke(unittest.TestCase):
             self.assertGreater(bright, 60)
         finally:
             batch.close()
+
+    def test_animation_dialog_keys_and_presets(self):
+        from clipcraft.gui import AnimationDialog
+
+        dlg = AnimationDialog(
+            None, "logo", {"rect": [0.1, 0.1, 0.2, 0.2]},
+            duration=4.0, video_path="", config={"canvas": {"width": 1080, "height": 1920}},
+            fps=30.0,
+        )
+        try:
+            # Seeds a single key at the layer's current centre; nothing animates yet.
+            self.assertEqual(len(dlg.result_keys()), 1)
+            self.assertAlmostEqual(dlg.result_keys()[0]["x"], 0.2)
+            self.assertAlmostEqual(dlg.result_keys()[0]["y"], 0.2)
+
+            dlg.timeline.set_playhead(2.0)
+            dlg.x_spin.setValue(80.0)
+            dlg.y_spin.setValue(30.0)
+            dlg.set_key_at_playhead()
+            keys = dlg.result_keys()
+            self.assertEqual(len(keys), 2)
+            self.assertAlmostEqual(keys[1]["t"], 2.0)
+            self.assertAlmostEqual(keys[1]["x"], 0.8)
+            self.assertAlmostEqual(keys[1]["y"], 0.3)
+
+            dlg.preset_combo.setCurrentText("Slide in from left")
+            dlg._apply_preset()
+            keys = dlg.result_keys()
+            self.assertEqual(len(keys), 2)
+            self.assertAlmostEqual(keys[0]["x"], 0.02)
+
+            dlg.clear_keys()
+            self.assertEqual(dlg.result_keys(), [])
+        finally:
+            dlg.close()
+
+    def test_aspect_presets_resize_canvas_and_preview(self):
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            square = win.aspect_combo.findData("1080x1080")
+            self.assertGreaterEqual(square, 0)
+            win.aspect_combo.setCurrentIndex(square)
+            self.assertEqual(win.config["canvas"]["width"], 1080)
+            self.assertEqual(win.config["canvas"]["height"], 1080)
+            width, height = win._preview_size()
+            self.assertAlmostEqual(width / height, 1.0, places=2)
+
+            wide = win.aspect_combo.findData("1920x1080")
+            win.aspect_combo.setCurrentIndex(wide)
+            self.assertEqual(win.config["canvas"]["width"], 1920)
+            self.assertEqual(win.config["canvas"]["height"], 1080)
+            width, height = win._preview_size()
+            self.assertAlmostEqual(width / height, 16 / 9, places=2)
+        finally:
+            win.close()
+
+    def test_animate_button_writes_keys_to_the_layer(self):
+        import tempfile
+        from unittest import mock
+        from clipcraft.gui import main_window as mw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            win = ClipCraftWindow(None, "valorant")
+            try:
+                win.video_path = str(Path(tmp) / "clip.mp4")
+                win.video_info = {"duration": 10.0, "fps": 30.0, "has_audio": True}
+                win.in_spin.setValue(0.0)
+                win.out_spin.setValue(10.0)
+                name = win._active_layer_name()
+
+                class FakeDialog:
+                    def __init__(self, *args, **kwargs):
+                        pass
+
+                    def exec(self):
+                        return QDialog.DialogCode.Accepted
+
+                    def result_keys(self):
+                        return [{"t": 0.0, "x": 0.1, "y": 0.2},
+                                {"t": 2.0, "x": 0.9, "y": 0.8}]
+
+                with mock.patch.object(mw, "AnimationDialog", FakeDialog):
+                    win.open_animation_dialog()
+
+                keys = win.config["layers"][name]["anim"]["keys"]
+                self.assertEqual(len(keys), 2)
+                self.assertAlmostEqual(keys[1]["x"], 0.9)
+            finally:
+                win.close()
 
     def test_layer_inspector_widget(self):
         inspector = LayerInspectorWidget()

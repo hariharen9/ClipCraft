@@ -11,6 +11,7 @@ from typing import Any, Callable, Sequence
 
 from PIL import Image as PILImage
 
+from .anim import overlay_expressions
 from .config import contain_fit, image_content_info, resolve_asset
 from .preview import render_text_image
 from .segments import Cut, kept_spans, normalize_cuts
@@ -217,7 +218,14 @@ def build_filter_complex(
             label = f"lay_{name}"
             parts.append(f"[{vsrc_label}]{filter_body}[{label}]")
             next_label = f"comp{step_idx}"
-            parts.append(f"[{current}][{label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
+            position = overlay_expressions(layer, out_w, out_h, duration)
+            if position:
+                parts.append(
+                    f"[{current}][{label}]overlay=x='{position[0]}':y='{position[1]}':"
+                    f"eof_action=pass:shortest=1[{next_label}]"
+                )
+            else:
+                parts.append(f"[{current}][{label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
             current = next_label
 
         elif kind == "image":
@@ -244,7 +252,14 @@ def build_filter_complex(
                 f"colorchannelmixer=aa={opacity:.4f}{image_fade}[{image_label}]"
             )
             next_label = f"comp{step_idx}"
-            parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
+            position = overlay_expressions(layer, out_w, out_h, duration)
+            if position:
+                parts.append(
+                    f"[{current}][{image_label}]overlay=x='{position[0]}':y='{position[1]}':"
+                    f"eof_action=pass:shortest=1[{next_label}]"
+                )
+            else:
+                parts.append(f"[{current}][{image_label}]overlay={draw_x}:{draw_y}:eof_action=pass:shortest=1[{next_label}]")
             current = next_label
             input_index += 1
 
@@ -278,7 +293,14 @@ def build_filter_complex(
                 f"colorchannelmixer=aa={opacity:.4f}{text_fade}[{text_label}]"
             )
             next_label = f"comp{step_idx}"
-            parts.append(f"[{current}][{text_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
+            position = overlay_expressions(layer, out_w, out_h, duration)
+            if position:
+                parts.append(
+                    f"[{current}][{text_label}]overlay=x='{position[0]}':y='{position[1]}':"
+                    f"eof_action=pass:shortest=1[{next_label}]"
+                )
+            else:
+                parts.append(f"[{current}][{text_label}]overlay={x}:{y}:eof_action=pass:shortest=1[{next_label}]")
             current = next_label
             input_index += 1
 

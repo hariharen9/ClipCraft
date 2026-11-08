@@ -26,6 +26,7 @@
    - [7.7 Layer Stack & Property Inspector](#77-layer-stack--property-inspector)
    - [7.8 Split & Cut Studio (`split_dialog.py`)](#78-split--cut-studio-split_dialogpy)
    - [7.9 Projects, Autosave & Portable Templates](#79-projects-autosave--portable-templates)
+   - [7.10 Animation Studio (`anim_dialog.py`)](#710-animation-studio-anim_dialogpy)
 8. [Comprehensive API, Class & Function Index](#8-comprehensive-api-class--function-index)
 9. [Keyboard Shortcuts & Pro NLE Controls](#9-keyboard-shortcuts--pro-nle-controls)
 10. [Testing Suite & Quality Verification](#10-testing-suite--quality-verification)
@@ -76,6 +77,7 @@ ClipCraft/
 │   ├── renderer.py                    # FFmpeg command builder, filter_complex graph generator, subprocess runner
 │   ├── preview.py                     # OpenCV/PIL software compositor mirroring FFmpeg in real time
 │   ├── segments.py                    # Cut-list math: kept spans, timeline<->source mapping, cut-aware stepping
+│   ├── anim.py                        # Layer position keyframes: normalization, sampling, FFmpeg expressions
 │   ├── project.py                     # .clipcraft sidecar: build/normalize/atomic save/load, recent projects
 │   ├── silence.py                     # FFmpeg silencedetect parsing → cut regions for auto silence removal
 │   ├── template_bundle.py             # Copy a template's images into templates/assets/<id>/ and rewrite paths
@@ -88,6 +90,7 @@ ClipCraft/
 │       ├── canvas_items.py            # QGraphicsItems: LayerItem, HandleItem, SafeZoneOverlayItem
 │       ├── crop_dialog.py             # VisualSourceCropDialog & VisualCropBoxItem
 │       ├── split_dialog.py            # SplitEditorDialog & SplitTimeline: split, delete segments, re-pick IN/OUT
+│       ├── anim_dialog.py             # AnimationDialog & AnimTimeline: layer position keyframes studio
 │       ├── layer_stack.py             # LayerStackWidget (Z-order reordering, eye toggles, badges)
 │       ├── transport_bar.py           # TransportWidget (scrubber, shuttle buttons, speed, IN/OUT)
 │       ├── inspector.py               # LayerInspectorWidget (sidebar for properties, typography, geometry)
@@ -224,6 +227,7 @@ Templates configure the full vertical layout and encoding parameters:
 | `fade_enabled` | `bool` | Enables the fade-in/out ramp for this layer. Absent means no fade. |
 | `fade_in` | `float` | Seconds to ramp the layer in from transparent (default `0.5`). |
 | `fade_out` | `float` | Seconds to ramp the layer out to transparent at the clip end (default `0.5`). |
+| `anim` | `object` | Optional position keyframes: `{"keys": [{"t": 0.0, "x": 0.5, "y": 0.5}, …]}`. x/y are the layer **centre** (0..1) at edited-timeline second `t`. Fewer than two keys = static. |
 | `asset` | `string` | (`image` only) File path relative to template location or absolute. |
 | `text` | `string` | (`text` only) String content to render. |
 | `font` | `string` | (`text` only) Font family name (Impact, Arial, Segoe UI, etc.). |
@@ -393,6 +397,21 @@ fade=t=out:st=2.5000:d=0.5000:alpha=1
 - Layers without `fade_enabled` get no extra filters at all, keeping their graph byte-identical.
 - **Preview parity**: `main_window._layer_fade_factor()` computes the same ramp from source time (`source_to_timeline`) and multiplies each canvas item's opacity, so the ramp previews exactly and stays in sync during playback and across cut regions.
 
+#### Animated Layer Positions (`clipcraft.anim` + `build_filter_complex`)
+Layers with two or more keys in `layer["anim"]["keys"]` get time-varying overlay positions:
+
+```
+[comp0][lay_main]overlay=x='(0.200000+(0.600000)*(t-0.000000)/2.000000)*1080-108.00':
+y='(...)*1920-96.00':eof_action=pass:shortest=1[comp1]
+```
+
+- Keys store the layer's **centre** in normalized canvas space at a time in **edited-timeline seconds** (after IN/OUT and cuts), so trimming or cutting never shifts the animation.
+- `anim.piecewise_expression()` compiles the keys to a clamped, piecewise-linear FFmpeg expression (`if(lt(t,t1),…)`). Values clamp before the first and after the last key, exactly like `anim.sample()`.
+- Overlay x/y is the top-left corner: `centre*canvas - rect/2`.
+- With fewer than two keys the graph is byte-identical to a static layer — animation stays opt-in.
+- The preview calls `LayerItem.setPos()` from the same `anim.sample()`; no pixmap rebuild, so per-tick cost is negligible.
+- Supported keys are position only: FFmpeg cannot animate `scale` while keeping a constant overlay size, and `overlay`'s `alpha` option is not time-variable. Opacity animation therefore belongs to the fade controls for now.
+
 #### Filter Graph Synthesis (`build_filter_complex`)
 1. Slices the incoming video stream (the cut output `[vcut]`, or `[0:v]` when uncut) into $N+1$ outputs using `split`:
    ```
@@ -459,6 +478,7 @@ A 3-panel responsive layout:
 - **Center Panel**: Canvas preview with `QGraphicsScene` and `QGraphicsView`, grips toggle, safe-zones toggle, sharp preview toggle.
 - **Right Panel**: Layer inspector with layer list, eye toggles, typography controls, geometry spinboxes, source crop controls, and undo/redo history.
 - **Window & splitters**: `launch_gui()` opens the window **maximised**; `F11` toggles borderless fullscreen and `Esc` returns to maximised. Left and right panes are wrapped in `QScrollArea`s with pinned minimum widths (336 / 416) and the splitter keeps their size (stretch factors `0,1,0`), so extra width always grows the canvas. The inspector's property rows naturally need ~392px; giving it 300px silently clips labels, which is why the minimums exist. The sidebar scrolls vertically because it needs ~980px of height on short laptop screens.
+- **Aspect presets**: the render panel's **Aspect** combo applies canonical canvases from `constants.ASPECT_PRESETS` (9:16 1080×1920, 4:5 1080×1350, 1:1 1080×1080, 16:9 1920×1080). `_preview_size()` fits the configured canvas into a 360×640 box so non-vertical templates preview correctly, and the batch preview derives its aspect from the canvas instead of a hard-coded 16:9.
 
 ### 7.2 Playback Engine, Live Audio & Reverse Buffer
 To maintain smooth 60fps playback with full sound synchronization:
@@ -522,6 +542,14 @@ To maintain smooth 60fps playback with full sound synchronization:
 - **Project menu**: *Recent ▾ → Project* offers Save project as…, Open project…, Save now, Delete saved project and a Recent projects submenu (state key `recent_projects`).
 - **Portable templates**: **Save as new template…** calls `clipcraft.template_bundle.bundle_template()`, which deep-copies the config, copies every image layer into `templates/assets/<id>/` (one copy per distinct source), rewrites `asset` to a forward-slash relative path, assigns a unique id (`same_name`, `same_name_2`, …) and saves with `save_config()`. Missing images are reported and left pointing at their original path. This is what makes a template survive the portable build or a shared ZIP — absolute `D:/...` paths otherwise work on exactly one machine.
 
+### 7.10 Animation Studio (`anim_dialog.py`)
+- Opened from the inspector's small **Animate…** button; entirely optional and modal, so the editor stays uncluttered.
+- **`AnimTimeline`**: keyframe strip with diamond markers. Click empty space to scrub, click a diamond to select it; the playhead can be dragged.
+- **Controls**: centre X/Y spin boxes, **Set key**, **Delete key**, **Clear all**, Play/Pause, and presets (Slide in from left, Slide out to right, Drift up). Apply preset writes two keys relative to the clip duration.
+- **Preview**: composites the whole layout at ~270px wide using `render_background` + `layer_preview_image`, applying the dialog's in-progress keys to the selected layer and every other layer's own keys.
+- **Time mapping**: the dialog works in edited-timeline seconds; `timeline_to_source(in, out, cuts)` maps the playhead to the decoded source frame.
+- **Apply** writes `layer["anim"]["keys"]` (or removes `anim` entirely when cleared) as a single undo step.
+
 ---
 
 ## 8. Comprehensive API, Class & Function Index
@@ -557,6 +585,15 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `source_to_timeline(t, start, end, cuts) -> float` / `timeline_to_source(offset, ...) -> float`: Scrubber mapping between edited and source time.
 - `cut_containing(t, cuts) -> Cut | None`, `next_kept_time`, `previous_kept_time`: Removed-region lookup and snapping.
 - `step_time(t, delta, start, end, cuts) -> float`: Cut-aware frame stepping / shuttle advance.
+
+### Module: `clipcraft.anim`
+- `rect_center(rect) -> (x, y)`: Normalized centre of a layer rect.
+- `normalize_keys(keys, duration=None) -> list[dict]`: Clamp/sort/de-duplicate keys; requires `t`, `x`, `y`.
+- `keys_for_layer(layer, duration=None) -> list[dict]` / `has_animation(layer) -> bool`: Read a layer's keys.
+- `sample(keys, t) -> (x, y) | None`: Linear interpolation, clamped at both ends.
+- `center_for_layer(layer, t, duration=None) -> (x, y)`: Animated centre with static-rect fallback.
+- `piecewise_expression(points, variable="t") -> str`: FFmpeg expression compiler.
+- `overlay_expressions(layer, canvas_w, canvas_h, duration=None) -> (x, y) | None`: Overlay corner expressions, or None when static.
 
 ### Module: `clipcraft.project`
 - `project_path_for(video) -> Path`: Sidecar location (`<stem>.clipcraft`).
@@ -601,6 +638,7 @@ To maintain smooth 60fps playback with full sound synchronization:
 - `AudioStudioDialog`: Dedicated sound, music trimming, volume, and ducking studio.
 - `CaptionStudioDialog`: Local Whisper transcription and karaoke caption styling studio.
 - `SplitEditorDialog` / `SplitTimeline`: Split, delete and restore middle segments, then re-pick IN/OUT.
+- `AnimationDialog` / `AnimTimeline`: Position-keyframe studio for one layer.
 - `LayerStackWidget`: Reorderable layer list with eye toggles.
 - `LayerInspectorWidget`: Sidebar property inspector.
 - `TransportWidget`: Scrubber and playback transport bar.
@@ -648,6 +686,7 @@ Run the entire automated test suite:
 - `tests/test_segments.py`: Cut normalization, kept spans, timeline mapping and cut-aware stepping (including exact-boundary steps).
 - `tests/test_render_cuts.py`: Trim/concat graph structure plus a frame-exact end-to-end render that decodes grey-coded frames to prove the removed ones are gone.
 - `tests/test_fades.py`: Fade-chain unit tests (defaults, clamping, background colour fade) plus renders that measure the darkened first/last frames and the alpha ramp of an overlaid image.
+- `tests/test_anim.py`: Key normalization/sampling, expression compilation, animated-graph structure, and an end-to-end render that measures the layer moving from x≈18px to x≈162px.
 - `tests/test_project.py`: Sidecar round-trip, atomic write, trim repair, version guard, corrupt JSON, recent list.
 - `tests/test_project_gui.py`: Autosave writes + restore, corrupt sidecar resilience, dirty marking, detected cuts reaching the split dialog, template save-as bundling, deleting a sidecar.
 - `tests/test_silence.py`: `silencedetect` parsing (offsets, unclosed silence), padding shrink, and an end-to-end tone/silence scan.
@@ -672,6 +711,7 @@ Run the entire automated test suite:
 9. **Fades Are Alpha Ramps**: Per-layer fades must stay on the *edited* timeline (fade-out ends on the last exported frame, cuts do not stretch them). Overlaid layers fade their alpha over whatever is underneath; the background fades colour to black because its alpha is discarded by `format=yuv420p`. The preview applies the identical ramp through `_layer_fade_factor()` — do not bake opacity into `layer_preview_image()`, or fades will double-apply.
 10. **Autosave Must Not Fight Restore**: Anything that writes the project sidecar must respect `_suppress_project_autosave`; `_apply_project()` sets it while restoring. A corrupt or newer sidecar must never prevent a recording from opening.
 11. **Templates Must Be Portable**: A template shipped or shared must not depend on absolute machine paths. Use `Save as new template…` (`bundle_template`) so images live in `templates/assets/<id>/` and `layer["asset"]` stays a relative POSIX path.
+12. **Animation Lives on the Edited Timeline**: Keyframe times are exported-seconds, sampled by `anim.sample()` for the preview and compiled by `anim.piecewise_expression()` for FFmpeg. Both must use the same keys and clamping; changing a layer's static rect must not shift its animated centre (keys store the centre, not the top-left).
 
 ---
 

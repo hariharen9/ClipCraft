@@ -39,6 +39,7 @@ class LayerInspectorWidget(QWidget):
 
     fade_changed = Signal()
     fade_apply_all_clicked = Signal()
+    animate_clicked = Signal()
 
     text_content_edited = Signal(str)
     text_prop_changed = Signal()
@@ -141,6 +142,17 @@ class LayerInspectorWidget(QWidget):
             fade_form.addRow("Fade in" if spin is self.fade_in_spin else "Fade out", spin)
         fade_layout.addLayout(fade_form)
         layer_layout.addWidget(fade_group)
+
+        animate_row = QHBoxLayout()
+        self.animate_button = QPushButton(" Animate…")
+        self.animate_button.setIcon(qta.icon("fa5s.magic", color="#ffd54f"))
+        self.animate_button.setToolTip(
+            "Open the keyframe studio and animate this layer's position over the clip"
+        )
+        self.animate_button.clicked.connect(self.animate_clicked.emit)
+        animate_row.addWidget(self.animate_button)
+        animate_row.addStretch(1)
+        layer_layout.addLayout(animate_row)
 
         # ── Text Properties (#17) ───────────────────────────────────
         self.text_group = QGroupBox("Text properties")
