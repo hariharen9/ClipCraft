@@ -536,19 +536,38 @@ Run the entire automated test suite:
 
 ---
 
-## 12. Standalone Portable Windows Build
+## 12. Standalone Portable Windows Build & Setup Installer
 
-ClipCraft provides an automated PyInstaller compilation pipeline producing a 100% self-contained portable distribution folder and ZIP archive:
+ClipCraft provides an automated compilation pipeline producing both a 100% self-contained portable distribution archive and a standard Windows Setup Wizard:
 
-### Build Pipeline (`build_portable.py` / `build_portable.bat`)
+### 12.1 Build Targets
+1. **Windows Setup Wizard (`dist/ClipCraft_Setup_v0.1.0.exe`)**:
+   - Built with Inno Setup (`installer.iss`).
+   - Supports per-user installation (`%LOCALAPPDATA%\Programs\ClipCraft`, no admin rights/UAC needed) or machine-wide (`Program Files`).
+   - Creates Windows Start Menu shortcuts and optional Desktop icon.
+   - Registers a clean uninstaller in Windows Settings (*Installed apps* / *Add or remove programs*).
+   - "Launch ClipCraft" checkbox upon completion.
+2. **Portable Edition (`dist/ClipCraft_v0.1.0_Windows_Portable.zip`)**:
+   - Zero-install folder and ZIP archive. Run anywhere without elevation.
+   - Contains `ClipCraft.exe`, bundled `ffmpeg.exe`, `ffprobe.exe`, `templates/`, and local state.
+
+### 12.2 Build Pipeline (`build_portable.py` / `build_portable.bat`)
 - Compiles `clipcraft.py` into `dist/ClipCraft/ClipCraft.exe` with `console=False` (no flashing terminal window).
 - Bundles vector fonts (`qtawesome`), AI subtitle assets (`ctranslate2`, `faster_whisper`), and PySide6 plugins.
 - Automatically copies `ffmpeg.exe` and `ffprobe.exe` directly into `dist/ClipCraft/`, making the application fully self-sufficient on machines without FFmpeg on `PATH`.
 - Copies all shipping game layout templates (`templates/*.json`) into `dist/ClipCraft/templates/`.
 - Initializes `clipcraft_state.json` in portable mode and writes user instructions to `dist/ClipCraft/README.txt`.
 - Generates `dist/ClipCraft_v0.1.0_Windows_Portable.zip` ready for one-click creator distribution.
+- Automatically compiles `dist/ClipCraft_Setup_v0.1.0.exe` if Inno Setup (`ISCC.exe`) is detected.
 
-### Running the Build:
+### 12.3 GitHub Actions Automated Releases (`.github/workflows/release.yml`)
+- Triggers on tag pushes (`v*`).
+- Sets up Python 3.11, FFmpeg, and Inno Setup (`choco install innosetup`).
+- Runs the complete automated test suite (`pytest`).
+- Executes `build_portable.py` to compile both the portable ZIP and the setup wizard executable.
+- Publishes a GitHub Release with `ClipCraft_Setup_*.exe`, `ClipCraft_*_Portable.zip`, and `ClipCraft.exe`.
+
+### Running the Build Locally:
 ```powershell
 .\.venv\Scripts\python.exe build_portable.py
 ```

@@ -7,6 +7,7 @@ Builds a self-contained portable Windows release using PyInstaller:
 4. Includes all game layout templates (Valorant, CS2, R6 Siege, Apex, Warzone, Fortnite, LoL).
 5. Prepares portable configuration and user documentation.
 6. Archives the portable folder into dist/ClipCraft_v0.1.0_Windows_Portable.zip.
+7. Compiles modern Windows Setup Wizard installer (dist/ClipCraft_Setup_v0.1.0.exe) if Inno Setup is present.
 """
 
 from __future__ import annotations
@@ -231,6 +232,76 @@ def create_portable_zip() -> Path:
     return zip_path
 
 
+def locate_iscc() -> Path | None:
+    """Find Inno Setup compiler executable (ISCC.exe)."""
+    candidates = []
+    # 1. System PATH
+    found = shutil.which("iscc")
+    if found:
+        candidates.append(Path(found))
+
+    # 2. Per-user installation (winget default)
+    user_prog = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe"
+    candidates.append(user_prog)
+
+    # 3. Machine-wide Program Files (x86 and x64)
+    prog_x86 = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe"
+    candidates.append(prog_x86)
+    prog_64 = Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Inno Setup 6" / "ISCC.exe"
+    candidates.append(prog_64)
+
+    # 4. Chocolatey path (standard on GitHub Actions windows-latest)
+    candidates.append(Path("C:/ProgramData/chocolatey/bin/iscc.exe"))
+    candidates.append(Path("C:/Program Files (x86)/Inno Setup 6/ISCC.exe"))
+
+    for c in candidates:
+        if c.is_file():
+            return c.resolve()
+    return None
+
+
+def build_inno_installer(tag_name: str | None = None) -> Path | None:
+    """Compile standard Windows Setup Wizard installer using Inno Setup."""
+    print("[7/7] Checking for Inno Setup compiler (ISCC.exe)…")
+    iscc = locate_iscc()
+    if not iscc:
+        print("      Notice: Inno Setup compiler (ISCC.exe) not detected; skipping installer .exe generation.")
+        print("      (Install with 'winget install JRSoftware.InnoSetup' or 'choco install innosetup' to build setup installer).")
+        return None
+
+    iss_file = ROOT / "installer.iss"
+    if not iss_file.is_file():
+        print(f"      Warning: Installer script not found at {iss_file}; skipping installer generation.")
+        return None
+
+    if not tag_name:
+        tag_name = os.environ.get("GITHUB_REF_NAME") or "v0.1.0"
+    version_str = tag_name.lstrip("v")
+    out_basename = f"ClipCraft_Setup_v{version_str}"
+
+    print(f"      Found Inno Setup at: {iscc}")
+    print(f"      Compiling Windows Setup Wizard ({out_basename}.exe)…")
+
+    cmd = [
+        str(iscc),
+        f"/DMyAppVersion={version_str}",
+        f"/F{out_basename}",
+        str(iss_file),
+    ]
+
+    proc = subprocess.run(cmd, cwd=str(ROOT))
+    if proc.returncode != 0:
+        print(f"      Warning: Inno Setup compilation failed with exit code {proc.returncode}.", file=sys.stderr)
+        return None
+
+    setup_exe = DIST_DIR / f"{out_basename}.exe"
+    if setup_exe.is_file():
+        size_mb = setup_exe.stat().st_size / (1024 * 1024)
+        print(f"      Windows Setup Wizard created successfully: {setup_exe.name} ({size_mb:.1f} MB)")
+        return setup_exe
+    return None
+
+
 def main() -> int:
     print("=" * 72)
     print(" ClipCraft — Standalone Portable Windows Build Pipeline")
@@ -243,13 +314,16 @@ def main() -> int:
         bundle_templates_and_assets()
         verify_executable()
         zip_path = create_portable_zip()
+        setup_exe = build_inno_installer()
 
         print("\n" + "=" * 72)
-        print(" BUILD COMPLETE — Standalone Portable Windows Release Ready!")
+        print(" BUILD COMPLETE — Standalone Portable & Windows Installer Ready!")
         print("=" * 72)
-        print(f"  Folder:   {APP_DIST}")
-        print(f"  Launcher: {APP_DIST / 'ClipCraft.exe'}")
-        print(f"  Archive:  {zip_path}")
+        print(f"  Folder:    {APP_DIST}")
+        print(f"  Launcher:  {APP_DIST / 'ClipCraft.exe'}")
+        print(f"  Archive:   {zip_path}")
+        if setup_exe:
+            print(f"  Installer: {setup_exe}")
         print("=" * 72)
         return 0
     except Exception as exc:

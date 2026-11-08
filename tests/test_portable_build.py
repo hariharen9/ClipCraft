@@ -32,12 +32,27 @@ class TestPortableBuild(unittest.TestCase):
         self.assertTrue((root / "clipcraft.spec").is_file())
         self.assertTrue((root / "build_portable.py").is_file())
         self.assertTrue((root / "build_portable.bat").is_file())
+        self.assertTrue((root / "installer.iss").is_file())
         try:
             import build_portable
             build_portable.ensure_icon()
         except Exception:
             pass
         self.assertTrue((root / "clipcraft.ico").is_file())
+
+    def test_installer_script_and_compiler_detection(self):
+        root = Path(__file__).resolve().parent.parent
+        iss = root / "installer.iss"
+        self.assertTrue(iss.is_file())
+        content = iss.read_text(encoding="utf-8")
+        self.assertIn("AppName", content)
+        self.assertIn("DefaultDirName", content)
+        self.assertIn("ClipCraft.exe", content)
+
+        import build_portable
+        iscc = build_portable.locate_iscc()
+        if iscc:
+            self.assertTrue(Path(iscc).is_file())
 
     def test_compiled_executable_smoke(self):
         root = Path(__file__).resolve().parent.parent

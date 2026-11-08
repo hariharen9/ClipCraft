@@ -31,6 +31,10 @@ jobs:
           ffmpeg-version: release
         id: setup-ffmpeg
 
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress -y
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -51,6 +55,7 @@ jobs:
         with:
           files: |
             dist/*.zip
+            dist/*Setup*.exe
             dist/ClipCraft/ClipCraft.exe
           name: "ClipCraft ${{ github.ref_name }}"
           generate_release_notes: true

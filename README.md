@@ -14,6 +14,31 @@ Drop your recording, pick your moments, align your layout, and export crisp 60fp
 
 ---
 
+## 📦 Downloads & Installation
+
+### Option 1: Standard Windows Setup Wizard (Recommended)
+Download **`ClipCraft_Setup_v0.1.0.exe`** from [Latest Releases](https://github.com/hariharen9/ClipCraft/releases/latest).
+- Standard Windows setup wizard with Start Menu shortcuts and optional Desktop icon.
+- Can be installed for the current user without administrator privileges or system-wide.
+- Includes full clean uninstaller registered in Windows Settings (*Installed apps*).
+- Bundles complete standalone engine including FFmpeg and local AI Whisper captions.
+
+### Option 2: Standalone Portable Edition (Zero Installation)
+Download **`ClipCraft_v0.1.0_Windows_Portable.zip`** from [Latest Releases](https://github.com/hariharen9/ClipCraft/releases/latest).
+- Extract anywhere (e.g., secondary SSD, USB drive) and run **`ClipCraft.exe`**.
+- Fully portable: configurations and presets are kept inside the application directory.
+- No Python, terminal, or system dependencies needed!
+
+### Option 3: Developer Setup (From Source)
+```bash
+git clone https://github.com/hariharen9/ClipCraft.git
+cd ClipCraft
+install.bat
+run_gui.bat
+```
+
+---
+
 ## ✨ Why Creators Love ClipCraft
 
 * **Instant Multi-Layer Magic**: Automatically splits single 16:9 footage into an immersive blurred background, a focused center gameplay feed, and dedicated crops for your facecam, killfeed, or chat.
