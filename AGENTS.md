@@ -28,6 +28,7 @@
 9. [Keyboard Shortcuts & Pro NLE Controls](#9-keyboard-shortcuts--pro-nle-controls)
 10. [Testing Suite & Quality Verification](#10-testing-suite--quality-verification)
 11. [Critical Invariants & Developer Guidelines](#11-critical-invariants--developer-guidelines)
+12. [Standalone Portable Windows Build](#12-standalone-portable-windows-build)
 
 ---
 
@@ -532,3 +533,24 @@ Run the entire automated test suite:
 5. **Backwards Compatibility**: Maintain compatibility shims when restructuring:
    - `clipcraft.batch_gui` shim for `clipcraft.gui.batch_window`.
 6. **Launcher & Virtualenv Resilience**: Batch launchers (`run_gui.bat`, `run_batch.bat`, `render.bat`, `install.bat`) must directly invoke `%~dp0.venv\Scripts\python.exe` to avoid executing system Python (e.g. Python 3.13) which may lack dependencies. Launchers must keep the window open (`pause`) on non-zero exit codes. Unhandled crashes and GUI startup errors must be written to `clipcraft.log` via `_setup_crash_logging()` in `clipcraft.py`.
+
+---
+
+## 12. Standalone Portable Windows Build
+
+ClipCraft provides an automated PyInstaller compilation pipeline producing a 100% self-contained portable distribution folder and ZIP archive:
+
+### Build Pipeline (`build_portable.py` / `build_portable.bat`)
+- Compiles `clipcraft.py` into `dist/ClipCraft/ClipCraft.exe` with `console=False` (no flashing terminal window).
+- Bundles vector fonts (`qtawesome`), AI subtitle assets (`ctranslate2`, `faster_whisper`), and PySide6 plugins.
+- Automatically copies `ffmpeg.exe` and `ffprobe.exe` directly into `dist/ClipCraft/`, making the application fully self-sufficient on machines without FFmpeg on `PATH`.
+- Copies all shipping game layout templates (`templates/*.json`) into `dist/ClipCraft/templates/`.
+- Initializes `clipcraft_state.json` in portable mode and writes user instructions to `dist/ClipCraft/README.txt`.
+- Generates `dist/ClipCraft_v0.1.0_Windows_Portable.zip` ready for one-click creator distribution.
+
+### Running the Build:
+```powershell
+.\.venv\Scripts\python.exe build_portable.py
+```
+Or double-click `build_portable.bat` in Windows Explorer.
+

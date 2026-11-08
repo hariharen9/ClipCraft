@@ -3,12 +3,43 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
-APP_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR))
+else:
+    APP_DIR = Path(__file__).resolve().parent.parent
+    BUNDLE_DIR = APP_DIR
+
 DEFAULT_CONFIG = APP_DIR / "config.json"  # legacy location, auto-migrated into templates/
-TEMPLATES_DIR = APP_DIR / "templates"
+TEMPLATES_DIR = (APP_DIR / "templates") if (APP_DIR / "templates").is_dir() else (BUNDLE_DIR / "templates")
+
+
+def _ensure_templates_dir() -> Path:
+    """Ensure TEMPLATES_DIR exists. In frozen mode, populate from bundled templates if needed."""
+    global TEMPLATES_DIR
+    local_templates = APP_DIR / "templates"
+    if local_templates.is_dir():
+        TEMPLATES_DIR = local_templates
+        return local_templates
+
+    bundle_templates = BUNDLE_DIR / "templates"
+    if bundle_templates.is_dir():
+        try:
+            import shutil
+            local_templates.mkdir(parents=True, exist_ok=True)
+            for item in bundle_templates.glob("*.json"):
+                shutil.copy2(item, local_templates / item.name)
+            TEMPLATES_DIR = local_templates
+            return local_templates
+        except Exception:
+            TEMPLATES_DIR = bundle_templates
+            return bundle_templates
+
+    return TEMPLATES_DIR
 
 
 def get_state_file() -> Path:
@@ -121,17 +152,25 @@ def validate_config(data: dict[str, Any]) -> None:
 
 def template_path(game: str) -> Path:
     """Path of a game template: templates/<game>.json."""
+    _ensure_templates_dir()
     target = TEMPLATES_DIR / f"{game.lower()}.json"
     if not target.is_file():
         example = TEMPLATES_DIR / f"{game.lower()}.example.json"
         if example.is_file():
             import shutil
             shutil.copy2(example, target)
+        elif (BUNDLE_DIR / "templates" / f"{game.lower()}.json").is_file():
+            import shutil
+            try:
+                shutil.copy2(BUNDLE_DIR / "templates" / f"{game.lower()}.json", target)
+            except Exception:
+                return BUNDLE_DIR / "templates" / f"{game.lower()}.json"
     return target
 
 
 def available_templates() -> list[tuple[str, str]]:
     """(game_id, display name) for every template in templates/, sorted by name."""
+    _ensure_templates_dir()
     if not TEMPLATES_DIR.is_dir():
         return []
     for example in TEMPLATES_DIR.glob("*.example.json"):

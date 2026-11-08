@@ -18,19 +18,34 @@ ProgressCallback = Callable[[float, str], None]
 
 
 def find_ffmpeg() -> str:
+    from .config import APP_DIR, BUNDLE_DIR
+    for candidate_dir in (APP_DIR, APP_DIR / "bin", BUNDLE_DIR, BUNDLE_DIR / "bin"):
+        exe = candidate_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if exe.is_file():
+            return str(exe)
     found = shutil.which("ffmpeg")
     if not found:
         raise FileNotFoundError(
-            "FFmpeg was not found. Install a full FFmpeg build and add its bin folder to PATH."
+            "FFmpeg was not found. Install a full FFmpeg build and add its bin folder to PATH, "
+            "or place ffmpeg.exe next to ClipCraft.exe."
         )
     return found
+
+
+def find_ffprobe() -> str:
+    from .config import APP_DIR, BUNDLE_DIR
+    for candidate_dir in (APP_DIR, APP_DIR / "bin", BUNDLE_DIR, BUNDLE_DIR / "bin"):
+        exe = candidate_dir / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if exe.is_file():
+            return str(exe)
+    return shutil.which("ffprobe") or "ffprobe"
 
 
 def probe_video(path: str | Path, ffprobe: str | None = None) -> dict[str, Any]:
     video_path = Path(path).expanduser().resolve()
     if not video_path.is_file():
         raise FileNotFoundError(f"Video not found: {video_path}")
-    ffprobe = ffprobe or shutil.which("ffprobe") or "ffprobe"
+    ffprobe = ffprobe or find_ffprobe()
     cmd = [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(video_path)]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
