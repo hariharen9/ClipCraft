@@ -30,7 +30,7 @@ class TestProjectGui(unittest.TestCase):
 
     def test_autosave_writes_a_sidecar_and_restores_it(self):
         with tempfile.TemporaryDirectory() as tmp:
-            video = Path(tmp) / "clutch.mp4"
+            video = (Path(tmp) / "clutch.mp4").resolve()
             win = self._window(video)
             try:
                 win._cut_regions = [(3.0, 4.0)]
@@ -66,7 +66,7 @@ class TestProjectGui(unittest.TestCase):
                 self.assertEqual(restored._cut_regions, [(3.0, 4.0)])
                 self.assertAlmostEqual(restored.in_spin.value(), 1.0)
                 self.assertAlmostEqual(restored.out_spin.value(), 8.0)
-                self.assertEqual(restored.project_path, saved)
+                self.assertEqual(restored.project_path.resolve(), saved.resolve())
             finally:
                 restored.close()
 

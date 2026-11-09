@@ -1,7 +1,7 @@
 ; Script generated for ClipCraft Windows Setup Wizard
 #define MyAppName "ClipCraft"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.2.0"
 #endif
 #define MyAppPublisher "ClipCraft"
 #define MyAppURL "https://github.com/hariharen9/ClipCraft"

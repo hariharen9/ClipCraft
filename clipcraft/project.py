@@ -29,7 +29,7 @@ MAX_RECENT_PROJECTS = 10
 
 def project_path_for(video_path: str | Path) -> Path:
     """Default sidecar location: ``<video stem>.clipcraft`` beside the recording."""
-    return Path(video_path).expanduser().with_suffix(PROJECT_SUFFIX)
+    return Path(video_path).expanduser().resolve().with_suffix(PROJECT_SUFFIX)
 
 
 def build_project(

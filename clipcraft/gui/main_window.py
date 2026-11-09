@@ -1393,7 +1393,7 @@ class ClipCraftWindow(QMainWindow):
 
     def _restore_project_for_video(self, video_path: Path) -> None:
         """Auto-restore the sidecar beside a freshly loaded recording, if any."""
-        candidate = project_path_for(video_path)
+        candidate = project_path_for(video_path).resolve()
         if not candidate.is_file():
             self.project_path = None
             return
@@ -1439,10 +1439,10 @@ class ClipCraftWindow(QMainWindow):
             else:
                 self.refresh_canvas()
 
-            self.project_path = Path(path) if path else None
+            self.project_path = Path(path).resolve() if path else None
             self._project_dirty = False
             if path:
-                self._remember_recent_project(Path(path))
+                self._remember_recent_project(self.project_path)
         finally:
             self._suppress_project_autosave = False
 
