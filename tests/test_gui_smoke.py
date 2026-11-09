@@ -572,6 +572,72 @@ class TestGuiSmoke(unittest.TestCase):
         overlay.hide_loading()
         self.assertFalse(overlay.isVisible())
 
+    def test_template_dropdown_actions(self):
+        from unittest.mock import patch
+        import tempfile
+        import json
+        from clipcraft.config import TEMPLATES_DIR
+
+        imported_file = TEMPLATES_DIR / "custom_test_game.json"
+        if imported_file.is_file():
+            imported_file.unlink()
+
+        win = ClipCraftWindow(None, "valorant")
+        try:
+            # Check actions exist in game_combo
+            import_idx = win.game_combo.findData("__action_import__")
+            folder_idx = win.game_combo.findData("__action_open_folder__")
+            self.assertGreaterEqual(import_idx, 0)
+            self.assertGreaterEqual(folder_idx, 0)
+            self.assertIn("Import Template", win.game_combo.itemText(import_idx))
+            self.assertIn("Open Templates Folder", win.game_combo.itemText(folder_idx))
+
+            # Test Open Templates Folder handler
+            with patch("clipcraft.gui.main_window.os.startfile", create=True) as mock_startfile:
+                win.open_templates_folder()
+                self.assertTrue(mock_startfile.called)
+
+            # Test Import Template handler with valid json
+            with tempfile.TemporaryDirectory() as tmp:
+                tmpl_file = Path(tmp) / "custom_test_game.json"
+                valid_tmpl = {
+                    "version": 1,
+                    "name": "Custom Test Game",
+                    "canvas": {"width": 1080, "height": 1920, "fps": 60, "encoder": "auto", "quality": 14},
+                    "background": {"blur": 2.0, "brightness": 0.0, "saturation": 1.0},
+                    "layers": {
+                        "background": {"kind": "background", "rect": [0, 0, 1, 1], "z": 0, "visible": True},
+                        "main": {"kind": "video", "rect": [0, 0, 1, 1], "crop": [0, 0, 1, 1], "fit": "cover", "z": 10, "visible": True},
+                    },
+                }
+                tmpl_file.write_text(json.dumps(valid_tmpl), encoding="utf-8")
+
+                with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=(str(tmpl_file), "ClipCraft Template (*.json)")), \
+                     patch("PySide6.QtWidgets.QMessageBox.question", return_value=16384):  # StandardButton.Yes
+                    win.import_template()
+
+                # Verify new template was added and selected
+                new_idx = win.game_combo.findData("custom_test_game")
+                self.assertGreaterEqual(new_idx, 0)
+                self.assertEqual(win.game, "custom_test_game")
+                self.assertIn("Custom Test Game", win.windowTitle())
+        finally:
+            if imported_file.is_file():
+                imported_file.unlink()
+            win.close()
+
+    def test_batch_window_template_dropdown_actions(self):
+        batch = BatchWindow()
+        try:
+            import_idx = batch._template_combo.findData("__action_import__")
+            folder_idx = batch._template_combo.findData("__action_open_folder__")
+            self.assertGreaterEqual(import_idx, 0)
+            self.assertGreaterEqual(folder_idx, 0)
+            self.assertIn("Import Template", batch._template_combo.itemText(import_idx))
+            self.assertIn("Open Templates Folder", batch._template_combo.itemText(folder_idx))
+        finally:
+            batch.close()
+
 
 if __name__ == "__main__":
     unittest.main()

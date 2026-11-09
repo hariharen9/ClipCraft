@@ -609,7 +609,7 @@ To maintain smooth 60fps playback with full sound synchronization:
 
 ### Module: `clipcraft.template_bundle`
 - `slugify(name) -> str`: Filesystem-safe template id.
-- `bundle_template(config, config_path, name, templates_dir=None) -> BundleResult`: Copy images to `templates/assets/<id>/`, rewrite paths, save the new template.
+- `bundle_template(config, config_path, name, templates_dir=None, target_id=None) -> BundleResult`: Copy images to `templates/assets/<id>/`, rewrite paths, save the new template. Overwrites `target_id` when explicitly specified.
 
 ### Module: `clipcraft.captions`
 - `CaptionWord`: Dataclass storing word string, start timestamp, end timestamp, and probability.

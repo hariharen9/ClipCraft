@@ -5,6 +5,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QCursor,
+    QDesktopServices,
     QFont,
     QIcon,
     QKeySequence,
@@ -69,6 +71,7 @@ from PySide6.QtWidgets import (
 from ..anim import keys_for_layer, sample as sample_animation
 from ..assets import ensure_assets
 from ..config import (
+    _ensure_templates_dir,
     available_templates,
     clone_config,
     image_content_info,
@@ -79,6 +82,7 @@ from ..config import (
     save_config,
     save_state,
     template_path,
+    validate_config,
 )
 from ..preview import layer_preview_image, render_background, to_qimage_array
 from ..project import (
@@ -91,7 +95,7 @@ from ..project import (
     save_project,
 )
 from ..renderer import probe_video
-from ..template_bundle import bundle_template
+from ..template_bundle import bundle_template, slugify
 from ..segments import (
     cut_containing,
     next_kept_time,
@@ -341,12 +345,8 @@ class ClipCraftWindow(QMainWindow):
         self.recent_button.clicked.connect(self._show_recent_menu)
         file_row.addWidget(self.recent_button)
         self.game_combo = QComboBox()
-        for template_id, template_name in available_templates():
-            self.game_combo.addItem(template_name, template_id)
-        combo_index = self.game_combo.findData(self.game)
-        if combo_index >= 0:
-            self.game_combo.setCurrentIndex(combo_index)
-        self.game_combo.setMinimumWidth(125)
+        self._refresh_template_combo()
+        self.game_combo.setMinimumWidth(150)
         self.game_combo.currentIndexChanged.connect(self._switch_template)
         file_row.addWidget(QLabel("Template"))
         file_row.addWidget(self.game_combo)
@@ -2327,9 +2327,27 @@ class ClipCraftWindow(QMainWindow):
 
     # -- template switching ------------------------------------------------
 
-    def _switch_template(self, index: int):
+    def _switch_template(self, index: int, force: bool = False):
         game_id = str(self.game_combo.itemData(index) or "")
-        if not game_id or game_id == self.game:
+        if not game_id:
+            return
+        if game_id == "__action_import__":
+            current = self.game_combo.findData(self.game)
+            if current >= 0:
+                self.game_combo.blockSignals(True)
+                self.game_combo.setCurrentIndex(current)
+                self.game_combo.blockSignals(False)
+            QTimer.singleShot(0, self.import_template)
+            return
+        if game_id == "__action_open_folder__":
+            current = self.game_combo.findData(self.game)
+            if current >= 0:
+                self.game_combo.blockSignals(True)
+                self.game_combo.setCurrentIndex(current)
+                self.game_combo.blockSignals(False)
+            QTimer.singleShot(0, self.open_templates_folder)
+            return
+        if game_id == self.game and not force:
             return
         try:
             new_config, new_path = load_config(template_path(game_id))
@@ -2836,10 +2854,116 @@ class ClipCraftWindow(QMainWindow):
         self.game_combo.clear()
         for template_id, template_name in available_templates():
             self.game_combo.addItem(template_name, template_id)
+        self.game_combo.insertSeparator(self.game_combo.count())
+        self.game_combo.addItem(qta.icon("fa5s.file-import", color="#00e5ff"), "Import Template…", "__action_import__")
+        self.game_combo.addItem(qta.icon("fa5s.folder-open", color="#00e5ff"), "Open Templates Folder", "__action_open_folder__")
         index = self.game_combo.findData(self.game)
         if index >= 0:
             self.game_combo.setCurrentIndex(index)
         self.game_combo.blockSignals(False)
+
+    def open_templates_folder(self) -> None:
+        """Open the templates directory in Windows Explorer or system file manager."""
+        folder = _ensure_templates_dir().resolve()
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(folder))
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+            self.statusBar().showMessage(f"Opened templates folder: {folder}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not open folder", f"Failed to open {folder}:\n{exc}")
+
+    def import_template(self) -> None:
+        """Open a file picker, validate a template JSON, bundle its assets, and switch to it."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import ClipCraft Template",
+            filter="ClipCraft Template (*.json);;All Files (*.*)",
+        )
+        if not file_path:
+            return
+
+        source_path = Path(file_path).expanduser().resolve()
+        if not source_path.is_file():
+            return
+
+        try:
+            data = json.loads(source_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.critical(self, "Invalid JSON", f"Could not parse template JSON:\n{exc}")
+            return
+
+        try:
+            validate_config(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Invalid Template", f"Template structure is invalid:\n{exc}")
+            return
+
+        template_name = str(data.get("name") or source_path.stem.replace("_", " ").title()).strip()
+        target_root = _ensure_templates_dir().resolve()
+        target_root.mkdir(parents=True, exist_ok=True)
+        slug = slugify(template_name)
+        existing_target = target_root / f"{slug}.json"
+
+        target_id: str | None = None
+        if existing_target.is_file():
+            if source_path == existing_target:
+                self._switch_to_template_id(slug, force=True)
+                self.statusBar().showMessage(f"Selected existing template '{template_name}'")
+                return
+
+            reply = QMessageBox.question(
+                self,
+                "Template Already Exists",
+                f"A template '{slug}' already exists in your templates folder.\n\n"
+                f"Do you want to overwrite it?\n\n"
+                f"• Click 'Yes' to overwrite '{slug}'.\n"
+                f"• Click 'No' to import as a new copy (e.g. '{slug}_2').\n"
+                f"• Click 'Cancel' to abort.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            if reply == QMessageBox.StandardButton.Yes:
+                target_id = slug
+            else:
+                target_id = None
+
+        try:
+            result = bundle_template(
+                config=data,
+                config_path=source_path,
+                name=template_name,
+                templates_dir=target_root,
+                target_id=target_id,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not import template:\n{exc}")
+            return
+
+        if result.missing:
+            QMessageBox.warning(
+                self,
+                "Template Imported (Missing Assets)",
+                f"Template '{result.template_id}' was imported successfully, but some referenced image assets were not found:\n\n"
+                + "\n".join(result.missing)
+                + "\n\nYou can set replacement images in the layer inspector.",
+            )
+
+        self._refresh_template_combo()
+        self._switch_to_template_id(result.template_id, force=True)
+        self.statusBar().showMessage(f"Successfully imported and selected template '{template_name}'")
+
+    def _switch_to_template_id(self, template_id: str, force: bool = False) -> None:
+        idx = self.game_combo.findData(template_id)
+        if idx >= 0:
+            if self.game_combo.currentIndex() != idx:
+                self.game_combo.setCurrentIndex(idx)
+            elif force:
+                self._switch_template(idx, force=True)
 
     def reset_layout(self):
         self._snapshot("Reset layout")

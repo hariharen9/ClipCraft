@@ -115,6 +115,39 @@ class TestBundleTemplate(unittest.TestCase):
             self.assertEqual(result.copied, ["icon.png"])
             self.assertTrue((templates_dir / "assets" / "relative" / "icon.png").is_file())
 
+    def test_explicit_target_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates_dir = root / "templates"
+            templates_dir.mkdir()
+            config = _config({})
+            config_path = root / "cfg.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            result = bundle_template(config, config_path, "Valorant Pro", templates_dir, target_id="valorant")
+            self.assertEqual(result.template_id, "valorant")
+            self.assertEqual(result.path.name, "valorant.json")
+            self.assertTrue(result.path.is_file())
+
+    def test_fallback_to_target_root_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            templates_dir = root / "templates"
+            templates_dir.mkdir()
+            (templates_dir / "assets").mkdir()
+            Image.new("RGBA", (8, 8), (255, 255, 0, 255)).save(templates_dir / "assets" / "shared_logo.png")
+
+            # Config is in an external folder that does not contain assets/shared_logo.png
+            ext_dir = root / "downloads"
+            ext_dir.mkdir()
+            config = _config({"logo": "assets/shared_logo.png"})
+            config_path = ext_dir / "downloaded.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            result = bundle_template(config, config_path, "Imported", templates_dir)
+            self.assertEqual(result.copied, ["shared_logo.png"])
+            self.assertTrue((templates_dir / "assets" / "imported" / "shared_logo.png").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

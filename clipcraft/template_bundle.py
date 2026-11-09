@@ -64,6 +64,7 @@ def bundle_template(
     config_path: str | Path,
     name: str,
     templates_dir: str | Path | None = None,
+    target_id: str | None = None,
 ) -> BundleResult:
     """Copy a template and its images into ``templates/assets/<id>/``.
 
@@ -75,7 +76,10 @@ def bundle_template(
     target_root.mkdir(parents=True, exist_ok=True)
 
     template_name = str(name).strip() or "Template"
-    template_id = _unique_id(slugify(template_name), target_root)
+    if target_id:
+        template_id = slugify(target_id)
+    else:
+        template_id = _unique_id(slugify(template_name), target_root)
     assets_dir = target_root / "assets" / template_id
     assets_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +97,8 @@ def bundle_template(
             continue
 
         source = resolve_asset(source_config_path, raw_asset)
+        if not source.is_file() and (target_root / raw_asset).is_file():
+            source = (target_root / raw_asset).resolve()
         if not source.is_file():
             result.missing.append(f"{layer_name}: {raw_asset}")
             continue

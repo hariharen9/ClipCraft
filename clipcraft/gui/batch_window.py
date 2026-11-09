@@ -23,19 +23,21 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QComboBox, QProgressBar, QFileDialog,
     QGroupBox, QMessageBox, QSizePolicy, QFrame
 )
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize, QPointF
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize, QPointF, QUrl
 from PySide6.QtGui import (
     QPixmap, QImage, QIcon, QColor, QPainter, QPen, QPolygonF,
-    QKeyEvent, QDragEnterEvent, QDropEvent,
+    QKeyEvent, QDragEnterEvent, QDropEvent, QDesktopServices,
 )
 
 from ..renderer import probe_video, run_render
 from ..config import (
     load_config, template_path, available_templates, clone_config,
     load_state, save_state, resolve_asset, contain_fit,
+    _ensure_templates_dir, validate_config,
 )
 from ..assets import ensure_assets
 from ..preview import to_qimage_array, render_background, normalized_crop, fit_cover, fit_contain
+from ..template_bundle import bundle_template, slugify
 from .constants import get_app_icon, set_app_user_model_id
 
 
@@ -652,6 +654,9 @@ class BatchWindow(QMainWindow):
             self._template_combo.addItem(display_name, game_id)
             if game_id.lower() == self._game.lower():
                 selected_idx = i
+        self._template_combo.insertSeparator(self._template_combo.count())
+        self._template_combo.addItem(qta.icon("fa5s.file-import", color="#00e5ff"), "Import Template…", "__action_import__")
+        self._template_combo.addItem(qta.icon("fa5s.folder-open", color="#00e5ff"), "Open Templates Folder", "__action_open_folder__")
         self._template_combo.setCurrentIndex(selected_idx)
         self._template_combo.blockSignals(False)
 
@@ -660,6 +665,22 @@ class BatchWindow(QMainWindow):
             return
         game_id = self._template_combo.currentData()
         if not game_id:
+            return
+        if game_id == "__action_import__":
+            current_idx = self._template_combo.findData(self._game)
+            if current_idx >= 0:
+                self._template_combo.blockSignals(True)
+                self._template_combo.setCurrentIndex(current_idx)
+                self._template_combo.blockSignals(False)
+            QTimer.singleShot(0, self._import_template)
+            return
+        if game_id == "__action_open_folder__":
+            current_idx = self._template_combo.findData(self._game)
+            if current_idx >= 0:
+                self._template_combo.blockSignals(True)
+                self._template_combo.setCurrentIndex(current_idx)
+                self._template_combo.blockSignals(False)
+            QTimer.singleShot(0, self._open_templates_folder)
             return
         self._load_active_template(game_id)
         self._cache_template_assets()
@@ -673,6 +694,105 @@ class BatchWindow(QMainWindow):
         # Redraw preview if we have an active frame
         if self._current_frame is not None:
             self._display_render_preview(self._current_frame)
+
+    def _open_templates_folder(self) -> None:
+        folder = _ensure_templates_dir().resolve()
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(folder))
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+            self.statusBar().showMessage(f"Opened templates folder: {folder}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Could not open folder", f"Failed to open {folder}:\n{exc}")
+
+    def _import_template(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import ClipCraft Template",
+            filter="ClipCraft Template (*.json);;All Files (*.*)",
+        )
+        if not file_path:
+            return
+
+        source_path = Path(file_path).expanduser().resolve()
+        if not source_path.is_file():
+            return
+
+        try:
+            data = json.loads(source_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.critical(self, "Invalid JSON", f"Could not parse template JSON:\n{exc}")
+            return
+
+        try:
+            validate_config(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Invalid Template", f"Template structure is invalid:\n{exc}")
+            return
+
+        template_name = str(data.get("name") or source_path.stem.replace("_", " ").title()).strip()
+        target_root = _ensure_templates_dir().resolve()
+        target_root.mkdir(parents=True, exist_ok=True)
+        slug = slugify(template_name)
+        existing_target = target_root / f"{slug}.json"
+
+        target_id: str | None = None
+        if existing_target.is_file():
+            if source_path == existing_target:
+                self._select_template_id(slug)
+                return
+
+            reply = QMessageBox.question(
+                self,
+                "Template Already Exists",
+                f"A template '{slug}' already exists in your templates folder.\n\n"
+                f"Do you want to overwrite it?\n\n"
+                f"• Click 'Yes' to overwrite '{slug}'.\n"
+                f"• Click 'No' to import as a new copy (e.g. '{slug}_2').\n"
+                f"• Click 'Cancel' to abort.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            if reply == QMessageBox.StandardButton.Yes:
+                target_id = slug
+            else:
+                target_id = None
+
+        try:
+            result = bundle_template(
+                config=data,
+                config_path=source_path,
+                name=template_name,
+                templates_dir=target_root,
+                target_id=target_id,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not import template:\n{exc}")
+            return
+
+        if result.missing:
+            QMessageBox.warning(
+                self,
+                "Template Imported (Missing Assets)",
+                f"Template '{result.template_id}' was imported successfully, but some referenced image assets were not found:\n\n"
+                + "\n".join(result.missing),
+            )
+
+        self._populate_templates()
+        self._select_template_id(result.template_id)
+        self.statusBar().showMessage(f"Successfully imported and selected template '{template_name}'")
+
+    def _select_template_id(self, template_id: str) -> None:
+        idx = self._template_combo.findData(template_id)
+        if idx >= 0:
+            if self._template_combo.currentIndex() != idx:
+                self._template_combo.setCurrentIndex(idx)
+            else:
+                self._on_template_selected(idx)
 
     def _update_template_info_label(self):
         layers = self._config.get("layers", {})
