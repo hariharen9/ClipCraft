@@ -38,6 +38,12 @@ class TestGuiSmoke(unittest.TestCase):
         transport.set_playing(False)
         self.assertIn("Play", transport.play_button.text())
 
+        # Test duration badge
+        self.assertIsNotNone(transport.duration_label)
+        transport.set_duration("01:23.456", "Tooltip text")
+        self.assertEqual(transport.duration_label.text(), "01:23.456")
+        self.assertEqual(transport.duration_label.toolTip(), "Tooltip text")
+
     def test_transport_in_out_signal_carries_value(self):
         """Regression: Signal() declared without args broke every IN/OUT spinbox edit."""
         transport = TransportWidget()

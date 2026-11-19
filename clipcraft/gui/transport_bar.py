@@ -85,7 +85,25 @@ class TransportWidget(QGroupBox):
         self.speed_combo.setCurrentIndex(2)
         self.speed_combo.currentIndexChanged.connect(self.speed_changed.emit)
         speed_row.addWidget(self.speed_combo)
+
         speed_row.addStretch(1)
+
+        dur_box = QHBoxLayout()
+        dur_box.setSpacing(5)
+        dur_icon = QLabel()
+        dur_icon.setPixmap(qta.icon("fa5s.stopwatch", color="#8e8ea0").pixmap(12, 12))
+        dur_box.addWidget(dur_icon)
+
+        self.duration_title = QLabel("Duration:")
+        self.duration_title.setStyleSheet("color: #8e8ea0; font-size: 11px;")
+        dur_box.addWidget(self.duration_title)
+
+        self.duration_label = QLabel("00:00.000")
+        self.duration_label.setStyleSheet("color: #00e5ff; font-weight: bold; font-size: 12px;")
+        self.duration_label.setToolTip("Total duration of exported clip (OUT - IN minus cut regions)")
+        dur_box.addWidget(self.duration_label)
+
+        speed_row.addLayout(dur_box)
         layout.addLayout(speed_row)
 
         trim_form = QFormLayout()
@@ -114,4 +132,11 @@ class TransportWidget(QGroupBox):
         else:
             self.play_button.setText(" Play")
             self.play_button.setIcon(qta.icon("fa5s.play", color="#ffffff"))
+
+    def set_duration(self, text: str, tooltip: str | None = None) -> None:
+        """Update the exported clip duration display and tooltip."""
+        self.duration_label.setText(text)
+        if tooltip:
+            self.duration_label.setToolTip(tooltip)
+            self.duration_title.setToolTip(tooltip)
 

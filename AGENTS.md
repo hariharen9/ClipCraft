@@ -112,6 +112,7 @@ ClipCraft/
 │
 ├── tests/                             # Automated Test Suite (all green)
 │   ├── __init__.py                    # Test package marker
+│   ├── conftest.py                    # Pytest hooks (clean shutdown preventing C++ Qt teardown abort)
 │   ├── test_cli.py                    # CLI arg parsing, time formats (MM:SS, HH:MM:SS), --cut ranges
 │   ├── test_context_menu.py           # Windows Explorer context menu registry and resolution tests
 │   ├── test_gui_smoke.py              # Smoke tests for Qt widgets, instantiation, dialogs, split timeline

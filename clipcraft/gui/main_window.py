@@ -392,6 +392,7 @@ class ClipCraftWindow(QMainWindow):
         self.speed_combo = self.transport.speed_combo
         self.in_spin = self.transport.in_spin
         self.out_spin = self.transport.out_spin
+        self.duration_label = self.transport.duration_label
 
         self.transport.play_toggled.connect(self.toggle_play)
         self.transport.step_back_requested.connect(self._step_back)
@@ -1899,7 +1900,25 @@ class ClipCraftWindow(QMainWindow):
         self.out_spin.setValue(max(value, self.in_spin.value() + 0.05))
         self.statusBar().showMessage(f"OUT set to {self._format_time(self.out_spin.value())}")
 
+    def _update_duration_display(self) -> None:
+        """Update the exported clip duration badge in the transport bar."""
+        if not hasattr(self, "transport") or not hasattr(self, "in_spin") or not hasattr(self, "out_spin"):
+            return
+        in_val = self.in_spin.value()
+        out_val = self.out_spin.value()
+        if out_val <= in_val:
+            self.transport.set_duration("00:00.000", "OUT point must be greater than IN point")
+            return
+        dur = self._kept_duration()
+        time_str = self._format_time(dur)
+        cuts_count = len(self._cut_regions)
+        tip = f"Exported clip duration: {time_str} ({dur:.3f} s)\nIN: {self._format_time(in_val)} → OUT: {self._format_time(out_val)}"
+        if cuts_count:
+            tip += f"\n{cuts_count} cut region{'s' if cuts_count != 1 else ''} removed"
+        self.transport.set_duration(time_str, tip)
+
     def _validate_trim(self):
+        self._update_duration_display()
         if self.out_spin.value() <= self.in_spin.value():
             self.render_button.setEnabled(False)
             self.render_status.setText("OUT must be later than IN")
