@@ -211,13 +211,21 @@ def verify_executable() -> None:
         print(f"      Note: GUI executable verification skipped ({exc}).")
 
 
-def create_portable_zip() -> Path:
+def _get_version_tag(tag_name: str | None = None) -> str:
+    if tag_name:
+        return tag_name if tag_name.startswith("v") else f"v{tag_name}"
+    from clipcraft import __version__
+    ref = os.environ.get("GITHUB_REF_NAME")
+    if ref:
+        return ref if ref.startswith("v") else f"v{ref}"
+    return f"v{__version__}"
+
+
+def create_portable_zip(tag_name: str | None = None) -> Path:
     """Compress the portable folder into a distributable zip archive."""
     print("[6/6] Creating compressed portable distribution archive…")
-    tag_name = os.environ.get("GITHUB_REF_NAME") or "v0.1.0"
-    if not tag_name.startswith("v"):
-        tag_name = f"v{tag_name}"
-    zip_path = DIST_DIR / f"ClipCraft_{tag_name}_Windows_Portable.zip"
+    tag = _get_version_tag(tag_name)
+    zip_path = DIST_DIR / f"ClipCraft_{tag}_Windows_Portable.zip"
     if zip_path.is_file():
         zip_path.unlink()
 
@@ -274,8 +282,7 @@ def build_inno_installer(tag_name: str | None = None) -> Path | None:
         print(f"      Warning: Installer script not found at {iss_file}; skipping installer generation.")
         return None
 
-    if not tag_name:
-        tag_name = os.environ.get("GITHUB_REF_NAME") or "v0.1.0"
+    tag_name = _get_version_tag(tag_name)
     version_str = tag_name.lstrip("v")
     out_basename = f"ClipCraft_Setup_v{version_str}"
 

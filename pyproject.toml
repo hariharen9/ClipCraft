@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clipcraft"
-version = "0.1.0"
+version = "0.2.1"
 description = "A template-driven gaming shorts and video layout editor using PySide6 and FFmpeg"
 requires-python = ">=3.10"
 dependencies = [
