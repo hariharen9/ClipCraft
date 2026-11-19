@@ -1155,10 +1155,33 @@ class ClipCraftWindow(QMainWindow):
                 )
 
         menu.addSeparator()
+        if sys.platform == "win32":
+            from clipcraft.context_menu import is_context_menu_registered
+            ctx_reg = is_context_menu_registered()
+            ctx_action = menu.addAction("Windows Explorer Context Menu")
+            ctx_action.setCheckable(True)
+            ctx_action.setChecked(ctx_reg)
+            ctx_action.setToolTip("Enable or disable 'Open in ClipCraft' when right-clicking video files in Explorer")
+            ctx_action.triggered.connect(self._toggle_context_menu)
+            menu.addSeparator()
+
         clear_action = menu.addAction("Clear Recent Files")
         clear_action.triggered.connect(self._clear_recent_files)
 
         menu.exec(self.recent_button.mapToGlobal(QPointF(0, self.recent_button.height()).toPoint()))
+
+    def _toggle_context_menu(self, checked: bool) -> None:
+        from clipcraft.context_menu import register_context_menu, unregister_context_menu
+        if checked:
+            if register_context_menu():
+                self.statusBar().showMessage("Added 'Open in ClipCraft' to Windows Explorer context menu", 4000)
+            else:
+                self.statusBar().showMessage("Failed to register context menu", 4000)
+        else:
+            if unregister_context_menu():
+                self.statusBar().showMessage("Removed 'Open in ClipCraft' from Windows Explorer context menu", 4000)
+            else:
+                self.statusBar().showMessage("Failed to remove context menu", 4000)
 
     def _clear_recent_files(self) -> None:
         try:

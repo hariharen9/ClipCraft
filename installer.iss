@@ -37,6 +37,32 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "contextmenu"; Description: "Add 'Open in ClipCraft' to Windows Explorer context menu for videos"; Flags: checkedonce
+
+[Registry]
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\video\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
+
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mp4\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
+
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mkv\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
+
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.mov\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
+
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.avi\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
+
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\ClipCraft"; ValueType: string; ValueData: "Open in ClipCraft"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\ClipCraft"; ValueType: string; ValueName: "Icon"; ValueData: """{app}\{#MyAppExeName}"",0"; Tasks: contextmenu; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.webm\shell\ClipCraft\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu; Flags: uninsdeletekey
 
 [Files]
 Source: "dist\ClipCraft\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion

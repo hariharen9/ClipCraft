@@ -81,6 +81,7 @@ ClipCraft/
 │   ├── project.py                     # .clipcraft sidecar: build/normalize/atomic save/load, recent projects
 │   ├── silence.py                     # FFmpeg silencedetect parsing → cut regions for auto silence removal
 │   ├── template_bundle.py             # Copy a template's images into templates/assets/<id>/ and rewrite paths
+│   ├── context_menu.py                # Windows Explorer right-click context menu integration
 │   ├── batch_gui.py                   # Backward-compatibility import shim for BatchWindow
 │   │
 │   └── gui/                           # Modular PySide6 GUI Package
@@ -112,6 +113,7 @@ ClipCraft/
 ├── tests/                             # Automated Test Suite (all green)
 │   ├── __init__.py                    # Test package marker
 │   ├── test_cli.py                    # CLI arg parsing, time formats (MM:SS, HH:MM:SS), --cut ranges
+│   ├── test_context_menu.py           # Windows Explorer context menu registry and resolution tests
 │   ├── test_gui_smoke.py              # Smoke tests for Qt widgets, instantiation, dialogs, split timeline
 │   ├── test_segments.py               # Cut math: normalization, kept spans, timeline mapping, cut-aware stepping
 │   ├── test_render_cuts.py            # Trim/concat graph assembly + frame-exact end-to-end cut render

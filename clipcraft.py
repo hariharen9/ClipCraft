@@ -84,6 +84,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Remove a region inside the IN/OUT range (repeatable), e.g. --cut 12.5-18",
     )
     parser.add_argument("--print-command", action="store_true", help="Print the generated FFmpeg command and exit")
+    parser.add_argument(
+        "--register-context-menu",
+        action="store_true",
+        help="Register 'Open in ClipCraft' into Windows Explorer context menu for video files",
+    )
+    parser.add_argument(
+        "--unregister-context-menu",
+        action="store_true",
+        help="Remove 'Open in ClipCraft' from Windows Explorer context menu",
+    )
     return parser
 
 
@@ -132,6 +142,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     game = (args.game or "").lower() or None
+
+    if args.register_context_menu:
+        from clipcraft.context_menu import register_context_menu
+        ok = register_context_menu()
+        if ok:
+            print("[ClipCraft] Successfully registered 'Open in ClipCraft' in Windows Explorer context menu.")
+            return 0
+        print("[ClipCraft] Failed to register context menu.", file=sys.stderr)
+        return 1
+
+    if args.unregister_context_menu:
+        from clipcraft.context_menu import unregister_context_menu
+        ok = unregister_context_menu()
+        if ok:
+            print("[ClipCraft] Successfully removed 'Open in ClipCraft' from Windows Explorer context menu.")
+            return 0
+        print("[ClipCraft] Failed to unregister context menu.", file=sys.stderr)
+        return 1
 
     if args.batch:
         try:
